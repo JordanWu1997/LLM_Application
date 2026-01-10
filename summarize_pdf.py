@@ -21,8 +21,8 @@ def find_pdfs(input_dir):
 
 
 def summarize_arxiv_pdf(pdf_path,
-                        model="gemma3:4b",
-                        text_max_str=4000,
+                        model="gemma3:12b",
+                        max_input_chars=4000,
                         stream=True,
                         verbose=False):
 
@@ -34,7 +34,7 @@ def summarize_arxiv_pdf(pdf_path,
 
     # 2. Prepare the prompt (focusing on the abstract/intro)
     # We slice the text to avoid hitting context window limits if the paper is long
-    input_text = text[:text_max_str]
+    input_text = text[:max_input_chars]
     prompt = f"Please provide a concise summary of the following research paper abstract/introduction:\n\n{input_text}"
 
     # 3. Query Ollama
@@ -113,6 +113,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="Summarize Arxiv PDFs using local Ollama LLM.")
+
     parser.add_argument("-i",
                         "--input",
                         dest="input_pdf_dir",
@@ -135,6 +136,15 @@ def main():
         "--no-stream",
         action="store_true",
         help="Disable stream the LLM output to the terminal in real-time")
+    parser.add_argument("--model",
+                        default="gemma3:12b",
+                        help="Ollama model to use (default: gemma3:12b)")
+    parser.add_argument(
+        "--max_input_chars",
+        type=int,
+        default=4000,
+        help="Max characters to read from the PDF (default: 4000)")
+
     args = parser.parse_args()
 
     # Find pdf file paths
@@ -144,6 +154,8 @@ def main():
     for pdf_file_path in tqdm(pdf_file_paths):
         print(f'[INFO] Input: {pdf_file_path}\n')
         summary = summarize_arxiv_pdf(pdf_file_path,
+                                      model=args.model,
+                                      max_input_chars=args.max_input_chars,
                                       verbose=args.verbose,
                                       stream=not args.no_stream)
         # Store summary
