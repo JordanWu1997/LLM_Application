@@ -38,18 +38,18 @@ def summarize_arxiv_pdf(pdf_path,
     prompt = f"Please provide a concise summary of the following research paper abstract/introduction:\n\n{input_text}"
 
     # 3. Query Ollama
-    stream = ollama.chat(model=model,
-                         messages=[
-                             {
-                                 'role': 'user',
-                                 'content': prompt,
-                             },
-                         ],
-                         stream=True)
+    response = ollama.chat(model=model,
+                           messages=[
+                               {
+                                   'role': 'user',
+                                   'content': prompt,
+                               },
+                           ],
+                           stream=True)
 
     # 4. Print
     full_summary, final_metadata = "", None
-    for chunk in stream:
+    for chunk in response:
         content = chunk['message']['content']
         if stream:
             print(content, end='', flush=True)
@@ -93,7 +93,7 @@ def save_as_markdown(input_file_path, summary, output_folder="summaries"):
 
     # Content
     content = f"""---
-source: {input_file_path}
+source: {filename}
 date: {datetime_str}
 ---
 
@@ -131,10 +131,10 @@ def main():
         action="store_true",
         help="Show Ollama performance statistics (tokens, speed, etc.)")
     parser.add_argument(
-        "-s",
-        "--stream",
+        "-n",
+        "--no-stream",
         action="store_true",
-        help="Stream the LLM output to the terminal in real-time")
+        help="Disable stream the LLM output to the terminal in real-time")
     args = parser.parse_args()
 
     # Find pdf file paths
@@ -145,7 +145,7 @@ def main():
         print(f'[INFO] Input: {pdf_file_path}\n')
         summary = summarize_arxiv_pdf(pdf_file_path,
                                       verbose=args.verbose,
-                                      stream=args.stream)
+                                      stream=not args.no_stream)
         # Store summary
         save_as_markdown(pdf_file_path,
                          summary,
