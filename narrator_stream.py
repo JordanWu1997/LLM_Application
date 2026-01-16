@@ -16,6 +16,7 @@ r"""
 
 import base64
 import json
+import os
 import sys
 import textwrap
 import time
@@ -23,6 +24,42 @@ import time
 import cv2
 import requests
 from tqdm import tqdm
+
+
+def generate_output_video_writer(input_video_path,
+                                 input_video_cap,
+                                 output_frame_width=-1,
+                                 output_video_dir='',
+                                 output_suffix='',
+                                 output_video='',
+                                 verbose=False):
+
+    FPS = input_video_cap.get(cv2.CAP_PROP_FPS)
+    frame_width = int(input_video_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(input_video_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    output_frame_width = frame_width
+    if output_frame_width > 0:
+        output_frame_height = int(output_frame_width *
+                                  (frame_height / frame_width))
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+
+    input_video_name, _ = os.path.splitext(input_video_path)
+    output_video_path = f'{input_video_name}_{output_suffix}.mp4'
+    if output_video_dir != '':
+        # Init output dir
+        if not os.path.isdir(output_video_dir):
+            os.makedirs(output_video_dir)
+        output_video_path = f'{output_video_dir}/{os.path.basename(input_video_name)}_{output_suffix}.mp4'
+    output_video_writer = cv2.VideoWriter(
+        output_video_path, fourcc, FPS,
+        (output_frame_width, output_frame_height))
+    if verbose:
+        print(
+            f'[INFO] INPUT: {input_video_path} ({frame_width}x{frame_height}@{FPS:.2f})'
+        )
+        print(f'[INFO] OUTPUT: {output_video_path}')
+
+    return output_video_writer, (output_frame_width, output_frame_height)
 
 
 def frame_to_base64(frame, format=".jpg", quality=90):
@@ -107,6 +144,8 @@ def caption_frame_stream(frame,
                          target_size=(320, 320),
                          caption_prefix='',
                          display_size=None,
+                         max_word_num=-1,
+                         live_display=True,
                          verbose=False):
 
     # Init
@@ -117,8 +156,8 @@ def caption_frame_stream(frame,
     img_b64 = frame_to_base64(resized_frame)
 
     # Init canvas
+    base_frame = frame.copy()
     if display_size is not None:
-        base_frame = frame.copy()
         base_frame = resize_with_padding(base_frame, target_size=display_size)
 
     # Construct payload
@@ -160,22 +199,25 @@ def caption_frame_stream(frame,
                 current_text += delta
 
                 # Early stop
-                if too_many_words(current_text, limit=10):
+                if too_many_words(current_text, word_limit=max_word_num):
                     return current_text.strip(), True
 
                 # Visualization
-                canvas = base_frame.copy()
-                canvas = draw_subtitle(canvas,
-                                       f'{caption_prefix} {current_text}',
-                                       margin=0,
-                                       position='top')
-                cv2.imshow(f'VLM Narrator', canvas)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    print("[INFO] QUIT pressed")
-                    return current_text.strip(), False  # Close connection
+                if live_display:
+                    canvas = base_frame.copy()
+                    canvas = draw_subtitle(canvas,
+                                           f'{caption_prefix} {current_text}',
+                                           margin=0,
+                                           position='bottom')
+                    cv2.imshow(f'VLM Narrator', canvas)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        print("[INFO] QUIT pressed")
+                        return current_text.strip(), False  # Close connection
+
                 # Print out in terminal
                 if verbose:
                     print(delta, end="", flush=True)
+
                 # Get data
             if chunk.get("done"):
                 break
@@ -186,8 +228,11 @@ def caption_frame_stream(frame,
     return current_text.strip(), True
 
 
-def too_many_words(text, limit=10):
-    return len(text.strip().split()) > limit
+def too_many_words(text, word_limit=10):
+    if word_limit > 0:
+        return len(text.strip().split()) > word_limit
+    else:
+        return False
 
 
 def draw_subtitle(frame,
@@ -243,6 +288,10 @@ def run_video_caption_pipeline(input_video_path,
                                infer_every_sec=5,
                                target_size=(320, 320),
                                display_size=None,
+                               max_word_num=-1,
+                               output_video_dir=None,
+                               output_suffix='output',
+                               live_display=True,
                                verbose=False):
 
     # Load video info
@@ -251,32 +300,61 @@ def run_video_caption_pipeline(input_video_path,
     step = int(fps * infer_every_sec)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+    # Generate output video writer
+    if output_video_dir is not None:
+        output_video_writer, (output_frame_width, output_frame_height) = \
+            generate_output_video_writer(input_video_path, cap,
+                                         output_video_dir=output_video_dir,
+                                         output_suffix=output_suffix,
+                                         output_frame_width=-1,
+                                         verbose=True)
+
     # Main
     frame_num = 0
+    caption_prefix, caption = '', ''
     progress_bar = tqdm(total=total_frames)
     while cap.isOpened():
         # Read frame
         ret, frame = cap.read()
         if not ret:
             break
-        frame_num += 1
-        progress_bar.update(1)
 
         # Caption
         if frame_num % step == 0 and frame_num > step:
             caption_start = time.time()
             video_time = frame_to_hhmmss(frame_num, fps)
+            caption_prefix = f'[{video_time}]'
             caption, status = caption_frame_stream(
                 frame,
-                caption_prefix=f'[{video_time}]',
+                caption_prefix=caption_prefix,
                 target_size=target_size,
                 display_size=display_size,
+                max_word_num=max_word_num,
+                live_display=live_display,
                 verbose=verbose)
             if verbose:
                 print(f'[INFO] FPS: {1 / (time.time() - caption_start):.1f}')
             if not status:
                 break
 
+        # Visualization for saving
+        if output_video_dir is not None:
+            canvas = frame.copy()
+            canvas = draw_subtitle(canvas,
+                                   f'{caption_prefix} {caption}',
+                                   margin=0,
+                                   position='bottom')
+            output_video_writer.write(canvas)
+
+        # Update frame
+        frame_num += 1
+        progress_bar.update(1)
+
+    # Release video writer
+    if output_video_dir is not None:
+        output_video_writer.release()
+
+    # Close all opencv windows
     cv2.destroyAllWindows()
 
 
@@ -284,6 +362,9 @@ if __name__ == '__main__':
 
     OLLAMA_URL = "http://localhost:11434/api/chat"
     MODEL = "gemma3:4b"
+    # MODEL = "moondream:latest"
+    # MODEL = "qwen2.5vl:3b"
+    # MODEL = "qwen3-vl:2b"
     PROMPT = ("Describe the main event in ONE short sentence."
               "Maximum 8 words."
               "No adjectives."
@@ -296,4 +377,7 @@ if __name__ == '__main__':
                                    infer_every_sec=3,
                                    target_size=(320, 320),
                                    display_size=(640, 360),
+                                   max_word_num=10,
+                                   output_video_dir='.',
+                                   live_display=False,
                                    verbose=False)
