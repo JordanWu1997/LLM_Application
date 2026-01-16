@@ -172,7 +172,10 @@ def caption_frame_stream(frame,
                     img_b64,
                 ]
             },
-        ]
+        ],
+        "options": {
+            "num_ctx": CONTEXT_WINDOW
+        }
     }
 
     # Print out video time
@@ -220,10 +223,24 @@ def caption_frame_stream(frame,
 
                 # Get data
             if chunk.get("done"):
+                metadata = chunk
                 break
 
+        # Newline after streaming
         if verbose:
-            print()  # newline after streaming
+            print()
+
+        # Token Truncation Check
+        if verbose:
+            processed = metadata.get("prompt_eval_count", 0)
+            if processed >= CONTEXT_WINDOW:
+                print(
+                    f"\033[93m⚠️  Warning: Input reached {CONTEXT_WINDOW} tokens and was truncated.\033[0m"
+                )
+            else:
+                print(
+                    f"\033[90m(Tokens used: {processed}/{CONTEXT_WINDOW})\033[0m"
+                )
 
     return current_text.strip(), True
 
@@ -370,6 +387,7 @@ if __name__ == '__main__':
               "No adjectives."
               "No explanations."
               "No speculation.")
+    CONTEXT_WINDOW = 4096
 
     input_video_paths = sys.argv[1:]
     for input_video_path in input_video_paths:
@@ -380,4 +398,4 @@ if __name__ == '__main__':
                                    max_word_num=10,
                                    output_video_dir='.',
                                    live_display=False,
-                                   verbose=False)
+                                   verbose=True)
