@@ -180,7 +180,7 @@ def caption_frame_stream(frame,
 
     # Print out video time
     if verbose:
-        print(f'{caption_prefix} ')
+        print(f'\n{caption_prefix} ')
 
     # Post to ollama server
     with requests.post(
@@ -203,6 +203,7 @@ def caption_frame_stream(frame,
 
                 # Early stop
                 if too_many_words(current_text, word_limit=max_word_num):
+                    print()
                     return current_text.strip(), True
 
                 # Visualization
@@ -397,5 +398,5 @@ if __name__ == '__main__':
                                    display_size=(640, 360),
                                    max_word_num=10,
                                    output_video_dir='.',
-                                   live_display=False,
+                                   live_display=not False,
                                    verbose=True)
