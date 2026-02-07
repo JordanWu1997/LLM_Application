@@ -205,12 +205,16 @@ def extract_md_file_keyword(inpute_md_file_path,
                                            model_name=model_name,
                                            ctx_window=ctx_window,
                                            verbose=verbose)
-    final_tags = [
-        t.strip().lower().replace(" ", "_") for t in final_tags_str.split(',')
-    ]
 
     # Update markdown note in place
-    update_note_in_place(inpute_md_file_path, final_tags, verbose=verbose)
+    if update_in_place:
+        final_tags = [
+            t.strip().lower().replace(" ", "_")
+            for t in final_tags_str.split(',')
+        ]
+        update_note_in_place(inpute_md_file_path, final_tags, verbose=verbose)
+
+    return final_tags_str.strip('\n').split(',')
 
 
 if __name__ == '__main__':
@@ -227,10 +231,10 @@ if __name__ == '__main__':
     inpute_md_file_paths = sys.argv[1:]
     for inpute_md_file_path in tqdm(inpute_md_file_paths):
         print(f'[INFO] INPUT: {inpute_md_file_path}')
-        extract_md_file_keyword(inpute_md_file_path,
-                                tag_file_path,
-                                ollama_url=ollama_url,
-                                model_name=model_name,
-                                ctx_window=ctx_window,
-                                verbose=True,
-                                update_in_place=True)
+        tags = extract_md_file_keyword(inpute_md_file_path,
+                                       tag_file_path,
+                                       ollama_url=ollama_url,
+                                       model_name=model_name,
+                                       ctx_window=ctx_window,
+                                       verbose=True,
+                                       update_in_place=True)
