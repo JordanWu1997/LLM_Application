@@ -337,6 +337,7 @@ def list_all_models(with_index=True):
         list: A list of dictionaries containing information about each model.
     """
 
+    models = []
     try:
         models = client.list_models()
         print("\nAvailable models:")
@@ -374,6 +375,7 @@ def list_running_models(with_index=True):
         list: A list of dictionaries containing information about each running model.
         Each dictionary includes 'name', 'capability', and 'size' fields.
     """
+    models = []
     try:
         models = client.list_running_models()
         if models:
