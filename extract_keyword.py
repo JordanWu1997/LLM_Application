@@ -158,6 +158,7 @@ def extract_md_file_keyword(inpute_md_file_path,
                             ollama_url="http://localhost:11434",
                             model_name="gemma3:12b",
                             ctx_window=4096,
+                            max_input_char=-1,
                             verbose=False,
                             update_in_place=False):
 
@@ -176,7 +177,8 @@ def extract_md_file_keyword(inpute_md_file_path,
     gen_prompt = (
         f"Extract 3-5 keywords from this note. "
         f"Current tags in file: {', '.join(file_tags)}. "
-        f"Return ONLY a comma-separated list.\n\nTEXT:\n{full_content[:3000]}")
+        f"Return ONLY a comma-separated list.\n\nTEXT:\n{full_content[:max_input_char]}"
+    )
     raw_keywords = [
         t.strip() for t in call_ollama_streaming(gen_prompt,
                                                  "Extraction",
