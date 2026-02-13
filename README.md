@@ -9,5 +9,7 @@
 - [X] Git commit message generator
 - [X] Logger/Journal analyzer
 - [X] Markdown note keyword/tag generator
+- [X] Translate bot w/ translategemma
+- [ ] SQL assistant
 - [ ] Object detection integrated VLM classification
 - [ ] Code reviewer, tester,
