@@ -19,7 +19,10 @@ import json
 import math
 import shutil
 import sys
+import threading
+import time
 
+import pyperclip
 import requests
 from langdetect import DetectorFactory, detect
 
@@ -82,52 +85,106 @@ LANG_DATA = [("aa", "Afar"), ("ab", "Abkhazian"), ("af", "Afrikaans"),
              ("yo", "Yoruba"), ("za", "Zhuang"), ("zh", "Chinese"),
              ("zu", "Zulu")]
 
+# FREQUENTLY USED LANGUAGES (Quick Access)
+FAVORITES = ["en", "zh", "ja", "es", "fr", "ko", "de"]
+
+
+class Spinner:
+
+    def __init__(self, message="Thinking..."):
+        self.spinner_chars = ["|", "/", "-", "\\"]
+        self.stop_running = threading.Event()
+        self.message = message
+
+    def spin(self):
+        while not self.stop_running.is_set():
+            for char in self.spinner_chars:
+                sys.stdout.write(f"\r{self.message} {char}")
+                sys.stdout.flush()
+                time.sleep(0.1)
+                if self.stop_running.is_set(): break
+        sys.stdout.write("\r" + " " * (len(self.message) + 2) +
+                         "\r")  # Clean up line
+
 
 def display_grid_menu(label, lang_data):
     item_width = 24
     search_query = ""
     current_page = 0
+
+    # Pre-extract favorite objects to keep them pinned at top
+    fav_items = [item for item in lang_data if item[0] in FAVORITES]
+
     while True:
         term_width, term_height = shutil.get_terminal_size()
+
+        # Filter library based on search
+        filtered_library = [
+            (c, n) for c, n in lang_data
+            if search_query in n.lower() or search_query in c.lower()
+        ]
+
+        # Pagination settings
         num_cols = max(1, (term_width - 2) // item_width)
-        num_rows = max(1, term_height - 10)
-        page_size = num_cols * num_rows
+        # Allocate 3 rows for favorites, rest for library
+        fav_rows = math.ceil(len(fav_items) / num_cols)
+        lib_rows = max(1, term_height - (fav_rows + 12))
+        page_size = num_cols * lib_rows
 
-        filtered = [(c, n) for c, n in lang_data
-                    if search_query in n.lower() or search_query in c.lower()]
-        total_pages = math.ceil(len(filtered) / page_size) if filtered else 1
-        if current_page >= total_pages: current_page = 0
+        total_pages = math.ceil(len(filtered_library) /
+                                page_size) if filtered_library else 1
 
-        print("\033c", end="")
+        print("\033c", end="")  # Clear screen
         print(f" SELECT {label.upper()} ".center(term_width, "="))
-        print(
-            f" Search: '{search_query} or '[None]' | Page {current_page+1}/{total_pages} "
-            .center(term_width))
-        print("-" * term_width)
+        print()
 
+        # --- SECTION: FAVORITES ---
+        print(f"⭐ QUICK ACCESS ".ljust(term_width - 1, "-"))
+        for i in range(0, len(fav_items), num_cols):
+            row = fav_items[i:i + num_cols]
+            row_str = " " + "".join([
+                f"{str(lang_data.index(item)+1).rjust(3)}. {item[1][:12]} ({item[0]})"
+                .ljust(item_width) for item in row
+            ])
+            print(row_str)
+        print()
+
+        # --- SECTION: LIBRARY ---
+        print(f"📚 ALL LANGUAGES (Search: '{search_query or 'None'}') ".ljust(
+            term_width - 1, "-"))
         start = current_page * page_size
-        page_items = filtered[start:start + page_size]
-        for r in range(num_rows):
+        page_items = filtered_library[start:start + page_size]
+
+        for r in range(lib_rows):
             row_cells = []
             for c in range(num_cols):
-                idx = r + (c * num_rows)
+                idx = r + (c * lib_rows)
                 if idx < len(page_items):
-                    code, name = page_items[idx]
-                    orig_idx = lang_data.index((code, name)) + 1
-                    cell = f"{str(orig_idx).rjust(3)}. {name[:12]} ({code})"
+                    item = page_items[idx]
+                    orig_idx = lang_data.index(item) + 1
+                    cell = f"{str(orig_idx).rjust(3)}. {item[1][:12]} ({item[0]})"
                     row_cells.append(cell.ljust(item_width))
             if any(cell.strip() for cell in row_cells):
                 print(" " + "".join(row_cells))
 
         print("-" * term_width)
-        print(" [N]ext | [P]rev | [S]earch | [R]eset | [EXIT] ".center(
-            term_width))
-        choice = input(f"\nChoice: ").strip().lower()
+        print(
+            f" Page {current_page+1}/{total_pages} | [N]ext | [P]rev | [S]earch | [R]eset | [EXIT] "
+            .center(term_width))
+
+        user_input = input(f"\nEnter Number, Name, or Code: ").strip()
+        choice = user_input.lower()
+
+        # Check for index
         if choice.isdigit():
             val = int(choice) - 1
             if 0 <= val < len(lang_data): return lang_data[val]
-        elif choice == 'n': current_page = (current_page + 1) % total_pages
-        elif choice == 'p': current_page = (current_page - 1) % total_pages
+
+        # Check for commands
+        if choice == 'n':
+            current_page = (current_page + 1) % total_pages
+        elif choice == 'p':
+            current_page = (current_page - 1) % total_pages
         elif choice == 's':
             search_query = input("Search Term: ").strip().lower()
             current_page = 0
@@ -137,13 +194,32 @@ def display_grid_menu(label, lang_data):
         elif choice == 'exit':
             sys.exit()
 
+        # Check for string match
+        else:
+            # Check for exact code match first (e.g., 'zh')
+            match = next(
+                (item for item in lang_data if item[0].lower() == choice),
+                None)
+            if not match:
+                # Check for exact name match (e.g., 'Chinese')
+                match = next(
+                    (item for item in lang_data if item[1].lower() == choice),
+                    None)
+
+            if match:
+                return match
+            else:
+                print(f"\n[!] No match for '{user_input}'. Try again.")
+                time.sleep(1)
+
 
 def get_ollama_response(text,
                         src,
                         tgt,
                         url,
                         model="translategemma:4b",
-                        stream=True):
+                        stream=True,
+                        verbose=False):
     prompt = (
         f"You are a professional {src[1]} ({src[0]}) to {tgt[1]} ({tgt[0]}) translator. "
         f"Convey meaning precisely. Produce only the {tgt[1]} translation. Translate:\n\n{text}"
@@ -156,15 +232,29 @@ def get_ollama_response(text,
             "temperature": 0.2
         }
     }
+
+    spinner = None
+    if verbose:
+        spinner = Spinner("Connecting to Ollama...")
+        spinner_thread = threading.Thread(target=spinner.spin)
+        spinner_thread.start()
+
     try:
         response = requests.post(f"{url}/api/generate",
                                  json=payload,
                                  stream=stream)
         response.raise_for_status()
-        full_res = ""
+
+        first_token, full_res = True, ""
+
         if stream:
             for line in response.iter_lines():
                 if line:
+                    if first_token and verbose:
+                        spinner.stop_running.set()  # Stop animation
+                        spinner_thread.join()
+                        first_token = False
+
                     chunk = json.loads(line.decode('utf-8'))
                     content = chunk.get("response", "")
                     print(content, end="", flush=True)
@@ -172,29 +262,38 @@ def get_ollama_response(text,
                     if chunk.get("done"):
                         final_chunk = chunk
 
-            # # Clipboard
-            # pyperclip.copy(full_res)
+            if verbose:
+                # Clipboard
+                pyperclip.copy(full_res)
 
-            # Extract Metrics
-            # Note: total_duration is in nanoseconds
-            total_dur = final_chunk.get("total_duration", 0) / 1e9
-            in_tokens = final_chunk.get("prompt_eval_count", 0)
-            out_tokens = final_chunk.get("eval_count", 0)
-            tps = out_tokens / total_dur if total_dur > 0 else 0
+                # Extract Metrics
+                # Note: total_duration is in nanoseconds
+                total_dur = final_chunk.get("total_duration", 0) / 1e9
+                in_tokens = final_chunk.get("prompt_eval_count", 0)
+                out_tokens = final_chunk.get("eval_count", 0)
+                tps = out_tokens / total_dur if total_dur > 0 else 0
 
-            # Print Stat Block
-            print(f"\n\n" + "📊 PERFORMANCE STATS ".center(40, "-"))
-            print(f"⏱  Time Elapsed:  {total_dur:.2f}s")
-            print(f"📥 Input Tokens:  {in_tokens}")
-            print(f"📤 Output Tokens: {out_tokens}")
-            print(f"⚡ Throughput:    {tps:.2f} tokens/sec")
-            # print(f"📋 Status:        Copied to clipboard!")
-            print(f"📋 Status:        DONE!")
-            print("-" * 40)
+                # Print Stat Block
+                print(f"\n\n" + "📊 PERFORMANCE STATS ".center(40, "-"))
+                print(f"⏱  Time Elapsed:  {total_dur:.2f}s")
+                print(f"📥 Input Tokens:  {in_tokens}")
+                print(f"📤 Output Tokens: {out_tokens}")
+                print(f"⚡ Throughput:    {tps:.3f} tokens/sec")
+                # print(f"📋 Status:        Copied to clipboard!")
+                print(f"📋 Status:        DONE!")
+                print("-" * 40)
+
             return full_res
+
         else:
+            if verbose and spinner:
+                spinner.stop_running.set()
+                spinner_thread.join()
             return response.json().get("response", "").strip()
+
     except Exception as e:
+        if spinner:
+            spinner.stop_running.set()
         return f"\n[Error]: {e}"
 
 
@@ -206,6 +305,10 @@ def main():
     parser.add_argument("-s",
                         "--source",
                         help="Source language code (e.g., 'en')")
+    parser.add_argument("-v",
+                        "--verbose",
+                        action="store_true",
+                        help="Show spinner and stats")
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", default="11434")
     parser.add_argument("--model", default="translategemma:4b")
@@ -234,7 +337,8 @@ def main():
             get_ollama_response(input_text, (s_code, s_name), (t_code, t_name),
                                 url,
                                 model=model,
-                                stream=False))
+                                stream=False,
+                                verbose=args.verbose))
 
     # 2. INTERACTIVE MODE
     else:
@@ -248,16 +352,18 @@ def main():
                 target_lang = display_grid_menu("Target", LANG_DATA)
 
             print(
-                f"\n[Target: {target_lang[1]}] Enter text (Double Enter to translate, 'MENU', 'EXIT'):"
+                f"\n[Target: {target_lang[1]}] Enter text (Double Enter to translate, '[M]ENU', '[E]XIT'):"
             )
             lines = []
             while True:
                 line = input()
-                if line.upper() == "MENU":
+                if line.upper() == "MENU" or line.upper() == 'M':
                     target_lang = None
                     break
-                if line.upper() == "EXIT": sys.exit()
-                if line == "": break
+                if line.upper() == "EXIT":
+                    sys.exit()
+                if line == "":
+                    break
                 lines.append(line)
 
             if target_lang and lines:
@@ -282,7 +388,8 @@ def main():
                                     target_lang,
                                     url,
                                     model=model,
-                                    stream=True)
+                                    stream=True,
+                                    verbose=args.verbose)
                 print("\n" + "=" * 40)
 
 
