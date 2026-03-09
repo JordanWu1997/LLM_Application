@@ -773,8 +773,16 @@ if __name__ == "__main__":
         host = input("\nEnter Ollama server host IP (default: localhost): ") \
             or "localhost"
 
+    # Port
+    if len(sys.argv) > 2:
+        port = sys.argv[2]
+    else:
+        port = input("\nEnter Ollama server port (default: 11434): ") \
+            or 11434
+    port = int(port)
+
     # Init client
-    client = OllamaClient(host=host)
+    client = OllamaClient(host=host, port=port)
 
     # Main
     while True:
