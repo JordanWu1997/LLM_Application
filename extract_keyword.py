@@ -153,7 +153,7 @@ def update_note_in_place(input_note_path, tags, verbose=False):
         print(f"\n✅ File updated. Tags: {', '.join(tags)}")
 
 
-def extract_md_file_keyword(inpute_md_file_path,
+def extract_md_file_keyword(input_md_file_path,
                             tag_file_path=None,
                             ollama_url="http://localhost:11434",
                             model_name="gemma3:12b",
@@ -163,10 +163,10 @@ def extract_md_file_keyword(inpute_md_file_path,
                             update_in_place=False):
 
     # Load note file
-    if not os.path.exists(inpute_md_file_path):
-        print(f'[ERROR] {inpute_md_file_path} is not a file ...')
+    if not os.path.exists(input_md_file_path):
+        print(f'[ERROR] {input_md_file_path} is not a file ...')
         return
-    with open(inpute_md_file_path, 'r') as f:
+    with open(input_md_file_path, 'r') as f:
         full_content = f.read()
 
     # Get existing tags
@@ -214,7 +214,7 @@ def extract_md_file_keyword(inpute_md_file_path,
             t.strip().lower().replace(" ", "_")
             for t in final_tags_str.split(',')
         ]
-        update_note_in_place(inpute_md_file_path, final_tags, verbose=verbose)
+        update_note_in_place(input_md_file_path, final_tags, verbose=verbose)
 
     return final_tags_str.strip('\n').split(',')
 
