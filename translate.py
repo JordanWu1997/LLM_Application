@@ -352,7 +352,7 @@ def main():
                 target_lang = display_grid_menu("Target", LANG_DATA)
 
             print(
-                f"\n[Target: {target_lang[1]}] Enter text (Double Enter to translate, '[M]ENU', '[E]XIT'):"
+                f"\n[Target: {target_lang[1]}] Enter text (Double Enter to translate, '[M]ENU', '[EXIT]'):"
             )
             lines = []
             while True:
@@ -369,6 +369,9 @@ def main():
             if target_lang and lines:
                 text = "\n".join(lines).strip()
                 if not text: continue
+
+                # Strip the last \n
+                text = text.rstrip('\n')
 
                 # Use provided source or detect
                 if args.source:
