@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
 """
-Ollama server API Documentation
+Ollama server REST API Documentation
+A comprehensive CLI for managing models and interacting with Ollama servers.
 - https://github.com/ollama/ollama/blob/main/docs/api.md
 """
 
 import base64
 import json
-import os
 import sys
 import threading
 import time
-from typing import Dict, List, Optional, Union
+from typing import Dict, Iterator, List, Optional, Union
 
 import requests
 
@@ -19,15 +19,27 @@ import requests
 class OllamaClient:
     """Client for interacting with Ollama REST API."""
 
-    def __init__(self, host: str = "localhost", port: int = 11434):
-        """
-        Initialize the Ollama client.
+    def __init__(self,
+                 host: str = "localhost",
+                 port: int = 11434,
+                 temperature: float = 0.7,
+                 top_p: float = 0.9,
+                 top_k: int = 40,
+                 num_ctx: int = 4096,
+                 stream: bool = False):
+        """ Initialize the Ollama client. """
+        self.host = host
+        self.port = port
+        self.update_base_url()
+        # General settings
+        self.temperature = temperature
+        self.top_p = top_p
+        self.top_k = top_k
+        self.num_ctx = num_ctx
+        self.stream = stream
 
-        Args:
-            host: Hostname or IP address of the Ollama server
-            port: Port number of the Ollama server
-        """
-        self.base_url = f"http://{host}:{port}/api"
+    def update_base_url(self):
+        self.base_url = f"http://{self.host}:{self.port}/api"
 
     def list_models(self) -> List[Dict]:
         """
@@ -108,15 +120,14 @@ class OllamaClient:
         response.raise_for_status()
         return response.json()
 
-    def chat(self,
-             model_name: str,
-             prompt: str = '',
-             image_paths: [str] = [],
-             messages: List[Dict[str, str]] = [],
-             temperature: float = 0.7,
-             top_p: float = 0.9,
-             top_k: int = 40,
-             stream: bool = False) -> Union[Dict, iter]:
+    def chat(
+        self,
+        model_name: str,
+        prompt: str = '',
+        image_paths: List[str] = [],
+        messages: List[Dict[str, str]] = [],
+        num_ctx: int = -1
+    ) -> tuple[Union[Dict, Iterator], List[Dict[str, str]]]:
         """
         Chat with a model.
 
@@ -125,10 +136,7 @@ class OllamaClient:
             - prompt (str): The prompt for the chat.
             - image_paths (list[str]): List of paths to images to include in the chat.
             - messages (list[dict]): List of message dictionaries [{"role": "user", "content": "Hello"}, ...].
-            - temperature (float): Sampling temperature (higher is more creative).
-            - top_p (float): Nucleus sampling parameter.
-            - top_k (int): Top-k sampling parameter.
-            - stream (bool): Whether to stream the response.
+            - num_ctx
 
         Returns:
             - dict: A dictionary containing the model's reply or a stream iterator
@@ -153,30 +161,30 @@ class OllamaClient:
             "model": model_name,
             "messages": messages,
             "options": {
-                "temperature": temperature,
-                "top_p": top_p,
-                "top_k": top_k
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+                "num_ctx": num_ctx if num_ctx > 0 else self.num_ctx,
             },
-            "stream": stream,
+            "stream": self.stream,
         }
         if encoded_images != []:
             payload["images"] = encoded_images
 
-        if stream:
-            return self._stream_chat_response(payload), messages
+        endpoint = "chat"
+        if self.stream:
+            return self._stream_response(endpoint, payload), messages
         else:
-            response = requests.post(f"{self.base_url}/chat", json=payload)
+            response = requests.post(f"{self.base_url}/{endpoint}",
+                                     json=payload)
             response.raise_for_status()
             return response.json(), messages
 
     def generate(self,
                  model_name: str,
                  prompt: str = '',
-                 image_paths: [str] = [],
-                 temperature: float = 0.7,
-                 top_p: float = 0.9,
-                 top_k: int = 40,
-                 stream: bool = False) -> Union[Dict, iter]:
+                 image_paths: List[str] = [],
+                 num_ctx: int = -1) -> Union[Dict, Iterator]:
         """
         Generates a response from the specified model using the given prompt and image paths.
 
@@ -184,13 +192,10 @@ class OllamaClient:
             model_name (str): The name of the model to use for generation.
             prompt (str, optional): The prompt text for the generation. Defaults to an empty string.
             image_paths ([str], optional): A list of file paths to images to be included in the generation. Defaults to an empty list.
-            temperature (float, optional): The temperature parameter for the generation. Defaults to 0.7.
-            top_p (float, optional): The top-p parameter for the generation. Defaults to 0.9.
-            top_k (int, optional): The top-k parameter for the generation. Defaults to 40.
-            stream (bool, optional): Whether to generate the response in a streaming manner. Defaults to False.
+            num_ctx
 
         Returns:
-            Union[Dict, iter]: A dictionary containing the generated response or an iterator if streaming is enabled.
+            Union[Dict, Itererator]: A dictionary containing the generated response or an iterator if streaming is enabled.
         """
 
         # Read image and encode to base64
@@ -205,22 +210,25 @@ class OllamaClient:
             "model": model_name,
             "prompt": prompt,
             "options": {
-                "temperature": temperature,
-                "top_p": top_p,
-                "top_k": top_k
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+                "num_ctx": num_ctx if num_ctx > 0 else self.num_ctx,
             },
             "images": encoded_images,
-            "stream": stream
+            "stream": self.stream
         }
 
-        if stream:
-            return self._stream_generate_response(payload)
+        endpoint = "generate"
+        if self.stream:
+            return self._stream_response(endpoint, payload)
         else:
-            response = requests.post(f"{self.base_url}/generate", json=payload)
+            response = requests.post(f"{self.base_url}/{endpoint}",
+                                     json=payload)
             response.raise_for_status()
             return response.json()
 
-    def _stream_chat_response(self, payload: Dict):
+    def _stream_response(self, endpoint, payload: Dict):
         """
         Stream chat responses.
 
@@ -230,27 +238,7 @@ class OllamaClient:
         Yields:
             Streamed response chunks
         """
-        with requests.post(f"{self.base_url}/chat", json=payload,
-                           stream=True) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        yield json.loads(line)
-                    except json.JSONDecodeError:
-                        yield {"error": "Failed to parse streaming response"}
-
-    def _stream_generate_response(self, payload: Dict):
-        """
-        Stream chat responses.
-
-        Args:
-            payload: Request payload dictionary
-
-        Yields:
-            Streamed response chunks
-        """
-        with requests.post(f"{self.base_url}/generate",
+        with requests.post(f"{self.base_url}/{endpoint}",
                            json=payload,
                            stream=True) as response:
             response.raise_for_status()
@@ -260,6 +248,30 @@ class OllamaClient:
                         yield json.loads(line)
                     except json.JSONDecodeError:
                         yield {"error": "Failed to parse streaming response"}
+
+    @staticmethod
+    def display_session_stats(session_stats):
+        # Stats
+        print("\n[Statistics]")
+        # TTFT
+        if session_stats['first_token_latency'] is not None:
+            print(
+                f"- First token latency (TTFT): {session_stats['first_token_latency']:.2f} sec"
+            )
+        # TPS
+        if session_stats['tps'] is not None:
+            print(f"- Performance: {session_stats['tps']:.1f} tokens/sec")
+        # Token stats
+        total = session_stats["total_input_tokens"] + session_stats[
+            "total_output_tokens"]
+        print("- Token Usage")
+        print(f"  - Input Tokens: {session_stats['total_input_tokens']}")
+        print(f"  - Output Tokens: {session_stats['total_output_tokens']}")
+        print(f"  - Total Tokens: {total}")
+        window_usage = total / session_stats['num_ctx']
+        print(
+            f"  - Context Window: {session_stats['num_ctx']} ({window_usage:.1%} Used)"
+        )
 
     @staticmethod
     def _spinner_task(stop_event):
@@ -326,7 +338,7 @@ class OllamaClient:
             sys.stdout.flush()
 
 
-def list_all_models(with_index=True):
+def list_all_models(client, with_index=True):
     """
     List all available models on the specified client.
 
@@ -359,12 +371,13 @@ def list_all_models(with_index=True):
                 print(
                     f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB)"
                 )
+
     except Exception as e:
         print(f"Error: {e}")
     return models
 
 
-def list_running_models(with_index=True):
+def list_running_models(client, with_index=True):
     """
     List all the running models on a specified platform.
 
@@ -406,7 +419,7 @@ def list_running_models(with_index=True):
     return models
 
 
-def load_model():
+def load_model(client):
     """
     Load a model from the available models list.
 
@@ -419,7 +432,7 @@ def load_model():
     """
 
     # List all available models
-    all_models = list_all_models()
+    all_models = list_all_models(client)
     # Enter model name to load
     model_name = input("\nEnter model name/index to load: ")
     # Convert index to model name
@@ -439,7 +452,7 @@ def load_model():
         print(f"[ERROR] Error loading model: {e}")
 
 
-def unload_model():
+def unload_model(client):
     """
     Unloads a specified model from the system.
 
@@ -452,7 +465,7 @@ def unload_model():
     """
 
     # List all available models
-    all_models = list_running_models()
+    all_models = list_running_models(client)
     # Enter model name/index to unload
     model_name = input("\nEnter model name/index to unload: ")
     # Convert index to model name
@@ -472,7 +485,7 @@ def unload_model():
         print(f"[ERROR] Error unloading model: {e}")
 
 
-def generate_completion_with_model(stream=False):
+def generate_completion_with_model(client, running_only=False):
     """
     Generate a completion using the specified model.
 
@@ -482,10 +495,10 @@ def generate_completion_with_model(stream=False):
     Returns:
         None
     """
-
     # Get available models
-    list_running_models(with_index=False)
-    all_models = list_all_models()
+    all_models = list_running_models(client, with_index=running_only)
+    if not running_only or all_models == []:
+        all_models = list_all_models(client)
 
     # Convert index to model name
     model_name = input("\nEnter model name to generate_completion with: ")
@@ -500,11 +513,23 @@ def generate_completion_with_model(stream=False):
         print(f'[ERROR] Not a valid model name: {model_name}')
         return
 
+    # Initial context settings
+    current_num_ctx = client.num_ctx
+    messages = []
+    session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
+
     # Opening
     print(f"\nGenerate completion with {model_name}")
     print("- type /exit to exit the chat session")
     print("- type /image to enter image paths for VLM")
-    print("- type /continue to continue generation with previous results")
+    print("- type /ctx [number] to change context length")
+    print(
+        "- type /continue to continue generation with previous results and follow-up input"
+    )
+    print(
+        '- type /history to shwo full history (user_input and model generation)'
+    )
+    print('- type /clear to clear history')
 
     # Load model to generate completion
     stop_spinner = threading.Event()
@@ -524,11 +549,20 @@ def generate_completion_with_model(stream=False):
 
         # Init
         image_paths = []
+        follow_up_input = None
 
         # User input
         user_input = input("\n>>> You: \n")
         if user_input.lower() == '/exit':
             break
+        elif user_input.lower() == '/history':
+            print('\n>>> History')
+            print(history)
+            continue
+            user_input = input("\n>>> You: \n")
+        elif user_input.lower() == '/clear':
+            print('\n[INFO] History cleared.')
+            continue
         elif user_input.lower() == '/image':
             # Add image
             image_path = input('\nEnter the image path: ')
@@ -542,9 +576,28 @@ def generate_completion_with_model(stream=False):
                 image_path = input('Enter the image path: ')
                 image_paths.append(image_path)
             # Add prompt for image
-            user_input = input("\n>>> You: \n", end="")
-        elif user_input.lower() == '/continue':
-            user_input = f'{history} '
+            user_input = input("\n>>> You: \n")
+        elif user_input.lower().startswith('/ctx'):
+            try:
+                parts = user_input.split()
+                if len(parts) > 1:
+                    new_num_ctx = int(parts[1])
+                    current_num_ctx = new_num_ctx
+                    print(
+                        f"[INFO] Context length updated to {current_num_ctx} for next message."
+                    )
+                else:
+                    print(f"[INFO] Current context length: {current_num_ctx}")
+                continue  # Return to start of loop for next prompt
+            except ValueError:
+                print(
+                    "[ERROR] Please provide a valid number for context length."
+                )
+                continue
+        elif user_input.lower() in ['/c', '/cont', '/continue']:
+            follow_up_input = input(
+                "\n>>> Your follow-up (or just leave empty): \n")
+            user_input = f'{history} {follow_up_input}'
 
         # Track full response and performance data
         print(f"\n<<< Model ({model_name}): ")
@@ -559,17 +612,20 @@ def generate_completion_with_model(stream=False):
                                           args=(stop_spinner, ))
         spinner_thread.start()
 
+        # Init
+        first_token_time, last_token_time = None, None
+        first_token_latency, tps = None, None
+
         try:
             # Send request to server
             response = client.generate(model_name,
                                        prompt=user_input,
-                                       stream=stream)
+                                       num_ctx=current_num_ctx)
 
             # Get first full token to measure first token time
             first_token_received = False
-            first_token_time, last_token_time = None, None
 
-            if stream:
+            if client.stream:
                 # Decode response
                 for chunk in response:
                     if "response" in chunk:
@@ -586,40 +642,48 @@ def generate_completion_with_model(stream=False):
                         # Display with typing effect
                         client._print_typing_effect(content)
                         full_response += content
+
                     # Track token info for TPS calculation
                     if "eval_count" in chunk:
                         token_count = chunk["eval_count"]
-                tps = 'N/A'
+
+                    # Capture final statistics from the last chunk
+                    if chunk.get("done"):
+                        session_stats["total_input_tokens"] += chunk.get(
+                            "prompt_eval_count", 0)
+                        session_stats["total_output_tokens"] += chunk.get(
+                            "eval_count", 0)
+
                 if first_token_time is not None:
                     first_token_latency = first_token_time - start_time
                     elapsed_time = time.time() - start_time
-                    tps = f'{token_count / elapsed_time:.1f}'
+                    tps = token_count / elapsed_time
                 print()
+
             else:
                 full_response = response.get("response", "No response")
-                tps = f'{client._calculate_tokens_per_second(response):.1f}'
-                print(full_response)
+                session_stats["total_input_tokens"] += response.get(
+                    "prompt_eval_count", 0)
+                session_stats["total_output_tokens"] += response.get(
+                    "eval_count", 0)
 
-            # Use streaming for typing effect
-            print("\n[Statistics]")
-            if first_token_time is not None:
-                print(f"- First token latency: {first_token_latency:.2f} sec")
-            print(f"- Performance: {tps} tokens/sec")
-            print("- type /exit to exit the chat session")
-            print("- type /image to enter image paths for VLM")
-            print(
-                "- type /continue to continue generation with previous results"
-            )
+            # Update stats
+            session_stats['first_token_latency'] = first_token_latency
+            session_stats['tps'] = tps
+            session_stats['num_ctx'] = current_num_ctx
+
+            # Show stats
+            client.display_session_stats(session_stats)
 
             # Add generated response to history
-            history += full_response
+            history = f'{user_input} {full_response}'
 
         # Handle exceptions
         except Exception as e:
             print(f"\n[ERROR] Error during chat: {e}")
 
 
-def chat_with_model(stream=False, running_only=False):
+def chat_with_model(client, running_only=False):
     """
     Chat with a specified model using the provided API.
 
@@ -631,9 +695,9 @@ def chat_with_model(stream=False, running_only=False):
     """
 
     # Get available models
-    all_models = list_running_models(with_index=False)
+    all_models = list_running_models(client, with_index=running_only)
     if not running_only or all_models == []:
-        all_models = list_all_models()
+        all_models = list_all_models(client)
 
     # Convert index to model name
     model_name = input("\nEnter model name to chat with: ")
@@ -648,10 +712,16 @@ def chat_with_model(stream=False, running_only=False):
         print(f'[ERROR] Not a valid model name: {model_name}')
         return
 
+    # Initial context settings
+    current_num_ctx = client.num_ctx
+    messages = []
+    session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
+
     # Opening
     print(f"\nChat with {model_name}")
     print("- type /exit to exit the chat session")
     print("- type /image to enter image paths for VLM")
+    print("- type /ctx [number] to change context length")
 
     # Load model to chat with
     stop_spinner = threading.Event()
@@ -666,7 +736,6 @@ def chat_with_model(stream=False, running_only=False):
     print(f'\nLoading {model_name} took {elapsed_time:.3f} sec')
 
     # Main loop
-    messages = []
     while True:
 
         # Init
@@ -690,6 +759,24 @@ def chat_with_model(stream=False, running_only=False):
                 image_paths.append(image_path)
             # Add prompt for image
             user_input = input("\n>>> You: \n")
+        elif user_input.lower().startswith('/ctx'):
+            try:
+                parts = user_input.split()
+                if len(parts) > 1:
+                    new_num_ctx = int(parts[1])
+                    current_num_ctx = new_num_ctx
+                    print(
+                        f"[INFO] Context length updated to {current_num_ctx} for next message."
+                    )
+                else:
+                    print(f"[INFO] Current context length: {current_num_ctx}")
+                continue  # Return to start of loop for next prompt
+            except ValueError:
+                print(
+                    "[ERROR] Please provide a valid number for context length."
+                )
+                continue
+
         print(f"\n<<< Model ({model_name}): ")
 
         # Track full response and performance data
@@ -702,19 +789,21 @@ def chat_with_model(stream=False, running_only=False):
                                           args=(stop_spinner, ))
         spinner_thread.start()
 
+        # Init
+        first_token_time, last_token_time = None, None
+        first_token_latency, tps = None, None
+
         try:
             # Send request to server
             response, messages = client.chat(model_name,
                                              prompt=user_input,
                                              messages=messages,
                                              image_paths=image_paths,
-                                             stream=stream)
+                                             num_ctx=current_num_ctx)
 
             # Get first full token to measure first token time
             first_token_received = False
-            first_token_time, last_token_time = None, None
-
-            if stream:
+            if client.stream:
                 # Decode response
                 for chunk in response:
                     if "message" in chunk and chunk["message"].get("content"):
@@ -731,29 +820,45 @@ def chat_with_model(stream=False, running_only=False):
                         # Display with typing effect
                         client._print_typing_effect(content)
                         full_response += content
+
                     # Track token info for TPS calculation
                     if "eval_count" in chunk:
                         token_count = chunk["eval_count"]
-                tps = 'N/A'
+
+                    # Capture final statistics from the last chunk
+                    if chunk.get("done"):
+                        session_stats["total_input_tokens"] += chunk.get(
+                            "prompt_eval_count", 0)
+                        session_stats["total_output_tokens"] += chunk.get(
+                            "eval_count", 0)
+
                 if first_token_time is not None:
                     first_token_latency = first_token_time - start_time
                     elapsed_time = time.time() - start_time
-                    tps = f'{token_count / elapsed_time:.1f}'
+                    tps = token_count / elapsed_time
                 print()
+
             else:
                 full_response = response.get("message",
                                              {}).get("content", "No response")
+                session_stats["total_input_tokens"] += response.get(
+                    "prompt_eval_count", 0)
+                session_stats["total_output_tokens"] += response.get(
+                    "eval_count", 0)
+
                 # Stop the spinner
                 stop_spinner.set()
                 spinner_thread.join()
-                tps = f'{client._calculate_tokens_per_second(response):.1f}'
+                tps = client._calculate_tokens_per_second(response)
                 print(full_response)
 
-            # Calculate first token latency if available
-            print("\n[Statistics]")
-            if first_token_time is not None:
-                print(f"- First token latency: {first_token_latency:.2f} sec")
-            print(f"- Performance: {tps} tokens/sec")
+            # Update stats
+            session_stats['first_token_latency'] = first_token_latency
+            session_stats['tps'] = tps
+            session_stats['num_ctx'] = current_num_ctx
+
+            # Show stats
+            client.display_session_stats(session_stats)
 
             # Add assistant response to messages for context
             messages.append({"role": "assistant", "content": full_response})
@@ -763,59 +868,147 @@ def chat_with_model(stream=False, running_only=False):
             print(f"\n[ERROR] Error during chat: {e}")
 
 
-# Example usage
-if __name__ == "__main__":
+def main_menu(client):
 
-    # Host
-    if len(sys.argv) > 1:
-        host = sys.argv[1]
-    else:
-        host = input("\nEnter Ollama server host IP (default: localhost): ") \
-            or "localhost"
-
-    # Port
-    if len(sys.argv) > 2:
-        port = sys.argv[2]
-    else:
-        port = input("\nEnter Ollama server port (default: 11434): ") \
-            or 11434
-    port = int(port)
-
-    # Init client
-    client = OllamaClient(host=host, port=port)
-
-    # Main
     while True:
-
-        # Help message
-        print(f"\n=== Ollama API Client for [{host}] ===")
+        # We access host from the client object so it reflects changes made in config_menu
+        print(f"\n=== Ollama API Client for [{client.host}:{client.port}] ===")
         print("0. Exit")
-        print("1. List all models")
-        print("2. List running models")
-        print("3. Load a model")
-        print("4. Unload a running model")
-        print("5. Chat with model")
-        print("6. Chat with running model")
-        print("7. Generate completion with model")
+        print("1. Model Management")
+        print("2. Interactive Sessions")
+        print("3. Server Configuration (Host/Port)")
 
-        # Enter choice
-        choice = input("\nEnter your choice (0,1-6): ")
+        choice = input("\nSelect Category (0-3): ")
+
         if choice == "0":
             print("Exiting program. Goodbye!")
             break
         elif choice == "1":
-            list_all_models()
+            management_menu(client)
         elif choice == "2":
-            list_running_models()
+            interaction_menu(client)
         elif choice == "3":
-            load_model()
-        elif choice == "4":
-            unload_model()
-        elif choice == "5":
-            chat_with_model(stream=True)
-        elif choice == "6":
-            chat_with_model(stream=True, running_only=True)
-        elif choice == "7":
-            generate_completion_with_model(stream=True)
+            config_menu(client)
         else:
-            print("Invalid choice. Please try again.")
+            print("Invalid choice.")
+
+
+def config_menu(client):
+
+    while True:
+        print("\n--- Server & Generation Configuration ---")
+        print(f"1. Host:         {client.host}")
+        print(f"2. Port:         {client.port}")
+        print(f"3. Context Win:  {client.num_ctx}")
+        print(f"4. Top_k:        {client.top_k}")
+        print(f"5. Top_p:        {client.top_p}")
+        print(f"6. Temperature:  {client.temperature}")
+        print(f"7. Stream Mode:  {'ON' if client.stream else 'OFF'}")
+        print("------------------------------------------")
+        print("0. Back to Main Menu")
+
+        choice = input("\nSelect setting to change (0-7): ")
+
+        if choice == "0":
+            break
+        elif choice == "1":
+            client.host = input(f"Enter host [{client.host}]: ") or client.host
+            client.update_base_url()
+        elif choice == "2":
+            val = input(f"Enter port [{client.port}]: ")
+            if val.isdigit():
+                client.port = int(val)
+                client.update_base_url()
+        elif choice == "3":
+            val = input(f"Enter context window [{client.num_ctx}]: ")
+            if val.isdigit(): client.num_ctx = int(val)
+        elif choice == "4":
+            val = input(f"Enter top_k [{client.top_k}]: ")
+            if val.isdigit(): client.top_k = int(val)
+        elif choice == "5":
+            val = input(f"Enter top_p [{client.top_p}]: ")
+            try:
+                client.top_p = float(val)
+            except ValueError:
+                pass
+        elif choice == "6":
+            val = input(f"Enter temperature [{client.temperature}]: ")
+            try:
+                client.temperature = float(val)
+            except ValueError:
+                pass
+        elif choice == "7":
+            client.stream = not client.stream
+            print(f"Stream mode toggled to: {client.stream}")
+
+
+def management_menu(client):
+
+    while True:
+        print("\n--- Model Management ---")
+        print("0. Back to Main Menu")
+        print("1. List All Available Models")
+        print("2. List Currently Running Models")
+        print("3. Load Model into Memory")
+        print("4. Unload Model (Free VRAM)")
+
+        choice = input("\nChoice: ")
+        if choice == "0": break
+        elif choice == "1": list_all_models(client)
+        elif choice == "2": list_running_models(client)
+        elif choice == "3": load_model(client)
+        elif choice == "4": unload_model(client)
+
+
+def interaction_menu(client):
+
+    while True:
+        print("\n--- Interactive Sessions ---")
+        print("0. Back to Main Menu")
+        print("1. Chat (Select from ALL models)")
+        print("2. Chat (Select from RUNNING models only)")
+        print("3. Generate (Select from ALL models)")
+        print("4. Generate (Select from RUNNING models only)")
+
+        choice = input("\nChoice: ")
+        if choice == "0": break
+        elif choice == "1": chat_with_model(client)
+        elif choice == "2":
+            chat_with_model(client, running_only=True)
+        elif choice == "3":
+            generate_completion_with_model(client)
+        elif choice == "4":
+            generate_completion_with_model(client, running_only=True)
+
+
+if __name__ == "__main__":
+
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Ollama API Client")
+    # Connection args
+    parser.add_argument("--host", type=str, default="localhost")
+    parser.add_argument("--port", type=int, default=11434)
+    # Generation args
+    parser.add_argument("--ctx", type=int, default=4096)
+    parser.add_argument("--top_k", type=int, default=40)
+    parser.add_argument("--top_p", type=float, default=0.9)
+    parser.add_argument("--temp", type=float, default=0.7)
+    parser.add_argument("--no-stream",
+                        action="store_true",
+                        help="Disable streaming by default")
+
+    args = parser.parse_args()
+
+    # Init ollama client
+    client = OllamaClient(host=args.host, port=args.port)
+
+    # Map arguments to client defaults
+    client.num_ctx = args.ctx
+    client.top_k = args.top_k
+    client.top_p = args.top_p
+    client.temperature = args.temp
+    client.stream = not args.no_stream
+
+    # Menu
+    main_menu(client)
