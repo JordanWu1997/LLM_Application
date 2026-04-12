@@ -230,10 +230,11 @@ if __name__ == '__main__':
     tag_file_path = "$HOME/Documents/KNOWLEDGE_BASE/TAG.md"
 
     # Main
-    inpute_md_file_paths = sys.argv[1:]
-    for inpute_md_file_path in tqdm(inpute_md_file_paths):
-        print(f'[INFO] INPUT: {inpute_md_file_path}')
-        tags = extract_md_file_keyword(inpute_md_file_path,
+    input_md_file_paths = sys.argv[1:]
+    print(input_md_file_paths)
+    for input_md_file_path in tqdm(input_md_file_paths):
+        print(f'[INFO] INPUT: {input_md_file_path}')
+        tags = extract_md_file_keyword(input_md_file_path,
                                        tag_file_path,
                                        ollama_url=ollama_url,
                                        model_name=model_name,
