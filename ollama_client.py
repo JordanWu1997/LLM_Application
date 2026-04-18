@@ -713,7 +713,6 @@ def chat_with_model(client, running_only=False):
         return
 
     # Initial context settings
-    current_num_ctx = client.num_ctx
     messages = []
     session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
 
@@ -722,6 +721,7 @@ def chat_with_model(client, running_only=False):
     print("- type /exit to exit the chat session")
     print("- type /image to enter image paths for VLM")
     print("- type /ctx [number] to change context length")
+    print("- type /think [options] to change think mode [on/off/OTHERS]")
 
     # Load model to chat with
     stop_spinner = threading.Event()
@@ -764,12 +764,34 @@ def chat_with_model(client, running_only=False):
                 parts = user_input.split()
                 if len(parts) > 1:
                     new_num_ctx = int(parts[1])
-                    current_num_ctx = new_num_ctx
+                    client.num_ctx = new_num_ctx
                     print(
-                        f"[INFO] Context length updated to {current_num_ctx} for next message."
+                        f"[INFO] Context length updated to {client.num_ctx} for next message."
                     )
                 else:
-                    print(f"[INFO] Current context length: {current_num_ctx}")
+                    print(f"[INFO] Current context length: {client.num_ctx}")
+                continue  # Return to start of loop for next prompt
+            except ValueError:
+                print(
+                    "[ERROR] Please provide a valid number for context length."
+                )
+                continue
+        elif user_input.lower().startswith('/think'):
+            try:
+                parts = user_input.split()
+                if len(parts) > 1:
+                    option = parts[1]
+                    if option.lower() == 'on':
+                        client.think = True
+                    elif option.lower() == 'off':
+                        clink.think = False
+                    else:
+                        clink.think = option
+                    print(
+                        f"[INFO] Think mode updated to {client.think} for next message."
+                    )
+                else:
+                    print(f"[INFO] Current think mode: {client.think}")
                 continue  # Return to start of loop for next prompt
             except ValueError:
                 print(
@@ -799,13 +821,29 @@ def chat_with_model(client, running_only=False):
                                              prompt=user_input,
                                              messages=messages,
                                              image_paths=image_paths,
-                                             num_ctx=current_num_ctx)
+                                             think=client.think,
+                                             num_ctx=client.num_ctx)
 
             # Get first full token to measure first token time
             first_token_received = False
             if client.stream:
                 # Decode response
                 for chunk in response:
+                    if "message" in chunk and chunk["message"].get("thinking"):
+                        thinking = chunk["message"]["thinking"]
+                        # Record time of first token
+                        if not first_token_received:
+                            first_token_time = time.time()
+                            first_token_received = True
+                            # Stop the spinner
+                            stop_spinner.set()
+                            spinner_thread.join()
+                        # Record time of latest token
+                        last_token_time = time.time()
+                        # Display with typing effect
+                        client._print_typing_effect(thinking)
+                        full_response += thinking
+
                     if "message" in chunk and chunk["message"].get("content"):
                         content = chunk["message"]["content"]
                         # Record time of first token
@@ -855,7 +893,7 @@ def chat_with_model(client, running_only=False):
             # Update stats
             session_stats['first_token_latency'] = first_token_latency
             session_stats['tps'] = tps
-            session_stats['num_ctx'] = current_num_ctx
+            session_stats['num_ctx'] = client.num_ctx
 
             # Show stats
             client.display_session_stats(session_stats)
