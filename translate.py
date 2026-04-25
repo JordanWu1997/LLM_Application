@@ -17,11 +17,13 @@ r"""
 import argparse
 import json
 import math
+import os
 import shutil
 import sys
 import threading
 import time
 
+import langdetect
 import pyperclip
 import requests
 from langdetect import DetectorFactory, detect
@@ -312,33 +314,89 @@ def main():
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", default="11434")
     parser.add_argument("--model", default="translategemma:4b")
+    parser.add_argument("-i",
+                        "--input_file",
+                        help="File to translate (CLI mode)")
+    parser.add_argument("-o",
+                        "--output_file",
+                        help="File to translate (CLI mode)")
     parser.add_argument("text", nargs="*", help="Text to translate (CLI mode)")
     args = parser.parse_args()
     url = f"http://{args.host}:{args.port}"
     model = args.model
 
     # 1. CLI MODE (Clean Output)
-    if args.target and args.text:
-        input_text = " ".join(args.text)
-        # Handle Source
-        if args.source:
-            s_code = args.source
-            s_name = next((n for c, n in LANG_DATA if c == s_code), "Source")
-        else:
-            s_code = detect(input_text)
-            s_name = next((n for c, n in LANG_DATA if c == s_code), "Detected")
+    if args.target:
+        if args.text:
+            input_text = " ".join(args.text)
+            # Handle Source
+            if args.source:
+                s_code = args.source
+                s_name = next((n for c, n in LANG_DATA if c == s_code),
+                              "Source")
+            else:
+                s_code = detect(input_text)
+                s_name = next((n for c, n in LANG_DATA if c == s_code),
+                              "Detected")
 
-        # Handle Target
-        t_code = args.target
-        t_name = next((n for c, n in LANG_DATA if c == t_code), "Target")
+            # Handle Target
+            t_code = args.target
+            t_name = next((n for c, n in LANG_DATA if c == t_code), "Target")
 
-        # Output ONLY the translation
-        print(
-            get_ollama_response(input_text, (s_code, s_name), (t_code, t_name),
-                                url,
-                                model=model,
-                                stream=False,
-                                verbose=args.verbose))
+            # Output ONLY the translation
+            print(
+                get_ollama_response(input_text, (s_code, s_name),
+                                    (t_code, t_name),
+                                    url,
+                                    model=model,
+                                    stream=False,
+                                    verbose=args.verbose))
+
+        elif args.input_file:
+            if not os.path.isfile(args.input_file):
+                sys.exit(f'[ERROR] {args.input_file} is not a file')
+
+            # Load input lines
+            with open(args.input_file, 'r') as input_txt:
+                lines = input_txt.readlines()
+
+            # Init output file
+            output_file = args.output_file if args.output_file else './output.txt'
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+            # Inference and save result as output
+            output_txt = open(output_file, 'w')
+            for line in lines:
+
+                # Handle Source
+                try:
+                    if args.source:
+                        s_code = args.source
+                        s_name = next((n for c, n in LANG_DATA if c == s_code),
+                                      "Source")
+                    else:
+                        s_code = detect(line)
+                        s_name = next((n for c, n in LANG_DATA if c == s_code),
+                                      "Detected")
+                except langdetect.lang_detect_exception.LangDetectException:
+                    output_txt.write(line)
+                    continue
+
+                # Handle Target
+                t_code = args.target
+                t_name = next((n for c, n in LANG_DATA if c == t_code),
+                              "Target")
+
+                response = get_ollama_response(line, (s_code, s_name),
+                                               (t_code, t_name),
+                                               url,
+                                               model=model,
+                                               stream=False,
+                                               verbose=args.verbose)
+                print(response)
+                output_txt.write(f'{response}\n')
+
+            output_txt.close()
 
     # 2. INTERACTIVE MODE
     else:
