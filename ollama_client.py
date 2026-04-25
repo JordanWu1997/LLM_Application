@@ -26,6 +26,7 @@ class OllamaClient:
                  top_p: float = 0.9,
                  top_k: int = 40,
                  num_ctx: int = 4096,
+                 think: bool = False,
                  stream: bool = False):
         """ Initialize the Ollama client. """
         self.host = host
@@ -36,6 +37,7 @@ class OllamaClient:
         self.top_p = top_p
         self.top_k = top_k
         self.num_ctx = num_ctx
+        self.think = think
         self.stream = stream
 
     def update_base_url(self):
@@ -126,7 +128,8 @@ class OllamaClient:
         prompt: str = '',
         image_paths: List[str] = [],
         messages: List[Dict[str, str]] = [],
-        num_ctx: int = -1
+        num_ctx: int = -1,
+        think: bool = True,
     ) -> tuple[Union[Dict, Iterator], List[Dict[str, str]]]:
         """
         Chat with a model.
@@ -166,6 +169,7 @@ class OllamaClient:
                 "top_k": self.top_k,
                 "num_ctx": num_ctx if num_ctx > 0 else self.num_ctx,
             },
+            "think": think,
             "stream": self.stream,
         }
         if encoded_images != []:
@@ -394,24 +398,37 @@ def list_running_models(client, with_index=True):
         if models:
             print("\nRunning models:")
             for i, model in enumerate(models):
-                model_info = client.show_model_info(model['name'])
+
                 model_size = model.get('size', 'N/A')
                 if model_size != 'N/A':
                     model_size = float(model_size) / 1024 / 1024 / 1024
                     model_size = f'{model_size:.2f}'
+                size_vram = model.get('size_vram', 'N/A')
+                if size_vram != 'N/A':
+                    size_vram = float(size_vram) / 1024 / 1024 / 1024
+                    size_vram = f'{size_vram:.2f}'
+                ctx_num = model.get('context_length', 'N/A')
+                if ctx_num != 'N/A':
+                    ctx_num = int(ctx_num)
+
+                # Model info
+                model_info = client.show_model_info(model['name'])
                 model_capability = model_info.get('capabilities', 'N/A')
                 model_params = model_info['details'].get(
                     'parameter_size', 'N/A')
                 model_quant = model_info['details'].get(
                     'quantization_level', 'N/A')
+
+                # Print
                 if with_index:
                     print(
-                        f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB)"
+                        f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num})"
                     )
                 else:
                     print(
-                        f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB)"
+                        f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num})"
                     )
+
         else:
             print("\nNo models currently running.")
     except Exception as e:
@@ -514,7 +531,6 @@ def generate_completion_with_model(client, running_only=False):
         return
 
     # Initial context settings
-    current_num_ctx = client.num_ctx
     messages = []
     session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
 
@@ -582,13 +598,13 @@ def generate_completion_with_model(client, running_only=False):
                 parts = user_input.split()
                 if len(parts) > 1:
                     new_num_ctx = int(parts[1])
-                    current_num_ctx = new_num_ctx
+                    client.num_ctx = new_num_ctx
                     print(
-                        f"[INFO] Context length updated to {current_num_ctx} for next message."
+                        f"[INFO] Context length updated to {client.num_ctx} for next message."
                     )
                 else:
-                    print(f"[INFO] Current context length: {current_num_ctx}")
-                continue  # Return to start of loop for next prompt
+                    print(f"[INFO] Current context length: {client.num_ctx}")
+                continue  # Return to start of loop for follonw prompt
             except ValueError:
                 print(
                     "[ERROR] Please provide a valid number for context length."
@@ -620,7 +636,7 @@ def generate_completion_with_model(client, running_only=False):
             # Send request to server
             response = client.generate(model_name,
                                        prompt=user_input,
-                                       num_ctx=current_num_ctx)
+                                       num_ctx=client.num_ctx)
 
             # Get first full token to measure first token time
             first_token_received = False
@@ -670,7 +686,7 @@ def generate_completion_with_model(client, running_only=False):
             # Update stats
             session_stats['first_token_latency'] = first_token_latency
             session_stats['tps'] = tps
-            session_stats['num_ctx'] = current_num_ctx
+            session_stats['num_ctx'] = client.num_ctx
 
             # Show stats
             client.display_session_stats(session_stats)
@@ -784,9 +800,9 @@ def chat_with_model(client, running_only=False):
                     if option.lower() == 'on':
                         client.think = True
                     elif option.lower() == 'off':
-                        clink.think = False
+                        client.think = False
                     else:
-                        clink.think = option
+                        client.think = option
                     print(
                         f"[INFO] Think mode updated to {client.think} for next message."
                     )
@@ -804,6 +820,7 @@ def chat_with_model(client, running_only=False):
         # Track full response and performance data
         start_time = time.time()
         full_response, token_count = "", 0
+        thinking_response, content_response = "", ""
 
         # Spinner for loading animation
         stop_spinner = threading.Event()
@@ -843,6 +860,7 @@ def chat_with_model(client, running_only=False):
                         # Display with typing effect
                         client._print_typing_effect(thinking)
                         full_response += thinking
+                        thinking_response += thinking
 
                     if "message" in chunk and chunk["message"].get("content"):
                         content = chunk["message"]["content"]
@@ -858,6 +876,7 @@ def chat_with_model(client, running_only=False):
                         # Display with typing effect
                         client._print_typing_effect(content)
                         full_response += content
+                        content_response += content
 
                     # Track token info for TPS calculation
                     if "eval_count" in chunk:
@@ -912,8 +931,8 @@ def main_menu(client):
         # We access host from the client object so it reflects changes made in config_menu
         print(f"\n=== Ollama API Client for [{client.host}:{client.port}] ===")
         print("0. Exit")
-        print("1. Model Management")
-        print("2. Interactive Sessions")
+        print("1. Interactive Sessions")
+        print("2. Model Management")
         print("3. Server Configuration (Host/Port)")
 
         choice = input("\nSelect Category (0-3): ")
@@ -922,9 +941,9 @@ def main_menu(client):
             print("Exiting program. Goodbye!")
             break
         elif choice == "1":
-            management_menu(client)
-        elif choice == "2":
             interaction_menu(client)
+        elif choice == "2":
+            management_menu(client)
         elif choice == "3":
             config_menu(client)
         else:
@@ -985,15 +1004,15 @@ def management_menu(client):
     while True:
         print("\n--- Model Management ---")
         print("0. Back to Main Menu")
-        print("1. List All Available Models")
-        print("2. List Currently Running Models")
+        print("1. List Currently Running Models")
+        print("2. List All Available Models")
         print("3. Load Model into Memory")
         print("4. Unload Model (Free VRAM)")
 
         choice = input("\nChoice: ")
         if choice == "0": break
-        elif choice == "1": list_all_models(client)
-        elif choice == "2": list_running_models(client)
+        elif choice == "1": list_running_models(client)
+        elif choice == "2": list_all_models(client)
         elif choice == "3": load_model(client)
         elif choice == "4": unload_model(client)
 
@@ -1003,20 +1022,21 @@ def interaction_menu(client):
     while True:
         print("\n--- Interactive Sessions ---")
         print("0. Back to Main Menu")
-        print("1. Chat (Select from ALL models)")
-        print("2. Chat (Select from RUNNING models only)")
-        print("3. Generate (Select from ALL models)")
-        print("4. Generate (Select from RUNNING models only)")
+        print("1. Chat (Select from RUNNING models only)")
+        print("2. Chat (Select from ALL models)")
+        print("3. Generate (Select from RUNNING models only)")
+        print("4. Generate (Select from ALL models)")
 
         choice = input("\nChoice: ")
         if choice == "0": break
-        elif choice == "1": chat_with_model(client)
-        elif choice == "2":
+        elif choice == "1":
             chat_with_model(client, running_only=True)
+        elif choice == "2":
+            chat_with_model(client)
         elif choice == "3":
-            generate_completion_with_model(client)
-        elif choice == "4":
             generate_completion_with_model(client, running_only=True)
+        elif choice == "4":
+            generate_completion_with_model(client)
 
 
 if __name__ == "__main__":
