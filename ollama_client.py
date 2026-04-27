@@ -27,7 +27,8 @@ class OllamaClient:
                  top_k: int = 40,
                  num_ctx: int = 4096,
                  think: bool = False,
-                 stream: bool = False):
+                 stream: bool = False,
+                 keep_alive: str = "10m"):
         """ Initialize the Ollama client. """
         self.host = host
         self.port = port
@@ -39,6 +40,7 @@ class OllamaClient:
         self.num_ctx = num_ctx
         self.think = think
         self.stream = stream
+        self.keep_alive = keep_alive
 
     def update_base_url(self):
         self.base_url = f"http://{self.host}:{self.port}/api"
@@ -85,7 +87,9 @@ class OllamaClient:
             Dict: A dictionary containing details about the specified model.
         """
         response = requests.post(f"{self.base_url}/show",
-                                 json={"model": model_name})
+                                 json={
+                                     "model": model_name,
+                                 })
         response.raise_for_status()
         return response.json()
 
@@ -100,7 +104,10 @@ class OllamaClient:
             Response dictionary with load status
         """
         response = requests.post(f"{self.base_url}/generate",
-                                 json={"model": model_name})
+                                 json={
+                                     "model": model_name,
+                                     "keep_alive": self.keep_alive
+                                 })
         response.raise_for_status()
         return response.json()
 
@@ -163,6 +170,7 @@ class OllamaClient:
         payload = {
             "model": model_name,
             "messages": messages,
+            "keep_alive": self.keep_alive,
             "options": {
                 "temperature": self.temperature,
                 "top_p": self.top_p,
@@ -213,6 +221,7 @@ class OllamaClient:
         payload = {
             "model": model_name,
             "prompt": prompt,
+            "keep_alive": self.keep_alive,
             "options": {
                 "temperature": self.temperature,
                 "top_p": self.top_p,
@@ -540,6 +549,9 @@ def generate_completion_with_model(client, running_only=False):
     print("- type /image to enter image paths for VLM")
     print("- type /ctx [number] to change context length")
     print(
+        "- type /keepalive [options] to change model keep alive time [1m/5m/1h/0/-1]"
+    )
+    print(
         "- type /continue to continue generation with previous results and follow-up input"
     )
     print(
@@ -614,6 +626,21 @@ def generate_completion_with_model(client, running_only=False):
             follow_up_input = input(
                 "\n>>> Your follow-up (or just leave empty): \n")
             user_input = f'{history} {follow_up_input}'
+        elif user_input.lower().startswith('/keepalive'):
+            try:
+                parts = user_input.split()
+                if len(parts) > 1:
+                    try:
+                        client.keep_alive = int(parts[1])
+                    except ValueError:
+                        client.keep_alive = parts[1]
+                    print(f"[INFO] Keep-alive updated to {client.keep_alive}")
+                else:
+                    print(f"[INFO] Current keep-alive: {client.keep_alive}")
+                continue
+            except Exception as e:
+                print(f"[ERROR] {e}")
+                continue
 
         # Track full response and performance data
         print(f"\n<<< Model ({model_name}): ")
@@ -738,6 +765,9 @@ def chat_with_model(client, running_only=False):
     print("- type /image to enter image paths for VLM")
     print("- type /ctx [number] to change context length")
     print("- type /think [options] to change think mode [on/off/OTHERS]")
+    print(
+        "- type /keepalive [options] to change model keep alive time [1m/5m/1h/0/-1]"
+    )
 
     # Load model to chat with
     stop_spinner = threading.Event()
@@ -813,6 +843,21 @@ def chat_with_model(client, running_only=False):
                 print(
                     "[ERROR] Please provide a valid number for context length."
                 )
+                continue
+        elif user_input.lower().startswith('/keepalive'):
+            try:
+                parts = user_input.split()
+                if len(parts) > 1:
+                    try:
+                        client.keep_alive = int(parts[1])
+                    except ValueError:
+                        client.keep_alive = parts[1]
+                    print(f"[INFO] Keep-alive updated to {client.keep_alive}")
+                else:
+                    print(f"[INFO] Current keep-alive: {client.keep_alive}")
+                continue
+            except Exception as e:
+                print(f"[ERROR] {e}")
                 continue
 
         print(f"\n<<< Model ({model_name}): ")
@@ -914,6 +959,11 @@ def chat_with_model(client, running_only=False):
             session_stats['tps'] = tps
             session_stats['num_ctx'] = client.num_ctx
 
+            # start = time.time()
+            # print(client.count_tokens(model_name, thinking_response))
+            # print(client.count_tokens(model_name, content_response))
+            # print(time.time() - start)
+
             # Show stats
             client.display_session_stats(session_stats)
 
@@ -961,10 +1011,11 @@ def config_menu(client):
         print(f"5. Top_p:        {client.top_p}")
         print(f"6. Temperature:  {client.temperature}")
         print(f"7. Stream Mode:  {'ON' if client.stream else 'OFF'}")
+        print(f"8. Keep Alive:   {client.keep_alive}")
         print("------------------------------------------")
         print("0. Back to Main Menu")
 
-        choice = input("\nSelect setting to change (0-7): ")
+        choice = input("\nSelect setting to change (0-8): ")
 
         if choice == "0":
             break
@@ -984,19 +1035,30 @@ def config_menu(client):
             if val.isdigit(): client.top_k = int(val)
         elif choice == "5":
             val = input(f"Enter top_p [{client.top_p}]: ")
-            try:
-                client.top_p = float(val)
-            except ValueError:
-                pass
+            if val:
+                try:
+                    client.top_p = float(val)
+                except ValueError:
+                    pass
         elif choice == "6":
-            val = input(f"Enter temperature [{client.temperature}]: ")
-            try:
-                client.temperature = float(val)
-            except ValueError:
-                pass
+            if val:
+                val = input(f"Enter temperature [{client.temperature}]: ")
+                try:
+                    client.temperature = float(val)
+                except ValueError:
+                    pass
         elif choice == "7":
             client.stream = not client.stream
             print(f"Stream mode toggled to: {client.stream}")
+        elif choice == "8":
+            val = input(
+                f"Enter keep_alive (e.g., 10m, 1h, 0, -1) [{client.keep_alive}]: "
+            )
+            if val:
+                try:
+                    client.keep_alive = int(val)
+                except ValueError:
+                    client.keep_alive = val
 
 
 def management_menu(client):
@@ -1045,17 +1107,60 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Ollama API Client")
     # Connection args
-    parser.add_argument("--host", type=str, default="localhost")
-    parser.add_argument("--port", type=int, default=11434)
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="localhost",
+        help=
+        "The hostname or IP address of the Ollama server (default: localhost)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=11434,
+        help=
+        "The port number the Ollama server is listening on (default: 11434)")
     # Generation args
-    parser.add_argument("--ctx", type=int, default=4096)
-    parser.add_argument("--top_k", type=int, default=40)
-    parser.add_argument("--top_p", type=float, default=0.9)
-    parser.add_argument("--temp", type=float, default=0.7)
-    parser.add_argument("--no-stream",
-                        action="store_true",
-                        help="Disable streaming by default")
-
+    parser.add_argument(
+        "--ctx",
+        type=int,
+        default=8192,
+        help=
+        "The size of the context window used to generate the next token (default: 8192)"
+    )
+    parser.add_argument(
+        "--top_k",
+        type=int,
+        default=40,
+        help=
+        "Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers (default: 40)"
+    )
+    parser.add_argument(
+        "--top_p",
+        type=float,
+        default=0.9,
+        help=
+        "Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text (default: 0.9)"
+    )
+    parser.add_argument(
+        "--temp",
+        type=float,
+        default=0.7,
+        help=
+        "The temperature of the model. Increasing the temperature will make the model answer more creatively (default: 0.7)"
+    )
+    parser.add_argument(
+        "--keep-alive",
+        type=str,
+        default="10m",
+        help=
+        "Controls how long the model stays loaded in memory following a request (e.g., '10m', '1h', '0', '-1') (default: '10m')"
+    )
+    parser.add_argument(
+        "--no-stream",
+        action="store_true",
+        help=
+        "Disable real-time response streaming and wait for the full response to be generated"
+    )
     args = parser.parse_args()
 
     # Init ollama client
@@ -1066,6 +1171,7 @@ if __name__ == "__main__":
     client.top_k = args.top_k
     client.top_p = args.top_p
     client.temperature = args.temp
+    client.keep_alive = args.keep_alive
     client.stream = not args.no_stream
 
     # Menu
