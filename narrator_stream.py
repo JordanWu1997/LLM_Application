@@ -54,6 +54,7 @@ def generate_output_video_writer(input_video_path,
     frame_width = int(input_video_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(input_video_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     output_frame_width = frame_width
+
     if output_frame_width > 0:
         output_frame_height = int(output_frame_width *
                                   (frame_height / frame_width))
@@ -64,7 +65,13 @@ def generate_output_video_writer(input_video_path,
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 
-    input_video_name, _ = os.path.splitext(input_video_path)
+    # Handle web cam
+    if isinstance(input_video_path, int):
+        input_video_name = str(input_video_path)
+    else:
+        input_video_name, _ = os.path.splitext(input_video_path)
+
+    # Main
     output_video_path = f'{input_video_name}_{output_suffix}.mp4'
     if output_video_dir != '':
         # Init output dir
@@ -488,9 +495,7 @@ def run_video_caption_pipeline(input_video_path,
             break
 
         # Caption
-        activated = False
-        if frame_num % step == 0 and frame_num > step:
-            activated = True
+        if frame_num % step == 0 and frame_num >= step:
             caption_start = time.time()
             video_time = frame_to_hhmmss(frame_num, fps)
             caption_prefix = f'[{video_time}]'
@@ -505,18 +510,6 @@ def run_video_caption_pipeline(input_video_path,
             if verbose:
                 print(f'[INFO] FPS: {1 / (time.time() - caption_start):.1f}')
             if not status:
-                break
-
-        # Live display
-        if not activated and live_display:
-            canvas = frame.copy()
-            canvas = draw_subtitle(canvas,
-                                   f'{caption_prefix} {caption}',
-                                   margin=0,
-                                   position='bottom')
-            cv2.imshow(f'VLM Narrator', canvas)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                print("[INFO] QUIT pressed")
                 break
 
         # Visualization for saving
@@ -542,23 +535,32 @@ def run_video_caption_pipeline(input_video_path,
 
 if __name__ == '__main__':
 
-    input_video_paths = sys.argv[1:]
-    for input_video_path in input_video_paths:
+    import argparse
 
-        run_streaming_caption_pipeline(input_video_path,
-                                       infer_every_sec=3,
+    parser = argparse.ArgumentParser()
+    parser.add_argument('input_video_paths', nargs='+', type=str)
+    parser.add_argument('-i', '--infer_interval', default=3)
+    parser.add_argument('-s', '--streaming', action='store_true')
+    parser.add_argument('-v', '--verbose', action='store_true')
+    args = parser.parse_args()
+
+    for input_video_path in args.input_video_paths:
+        input_video_path = int(input_video_path)
+        if args.streaming:
+            run_streaming_caption_pipeline(input_video_path,
+                                           infer_every_sec=args.infer_interval,
+                                           target_size=(320, 320),
+                                           display_size=(640, 360),
+                                           max_word_num=10,
+                                           output_video_dir='.',
+                                           live_display=not False,
+                                           verbose=args.verbose)
+        else:
+            run_video_caption_pipeline(input_video_path,
+                                       infer_every_sec=args.infer_interval,
                                        target_size=(320, 320),
                                        display_size=(640, 360),
                                        max_word_num=10,
                                        output_video_dir='.',
                                        live_display=not False,
-                                       verbose=True)
-
-        #run_video_caption_pipeline(input_video_path,
-        #                           infer_every_sec=3,
-        #                           target_size=(320, 320),
-        #                           display_size=(640, 360),
-        #                           max_word_num=10,
-        #                           output_video_dir='.',
-        #                           live_display=not False,
-        #                           verbose=True)
+                                       verbose=args.verbose)
