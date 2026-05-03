@@ -17,13 +17,29 @@ r"""
 import base64
 import json
 import os
+import queue
 import sys
-import textwrap
+import threading
 import time
 
 import cv2
 import requests
 from tqdm import tqdm
+
+# --- Configuration ---
+OLLAMA_URL = "http://localhost:11434/api/chat"
+MODEL = "gemma4:e4b"
+PROMPT = ("Describe the main event in ONE short sentence. "
+          "Maximum 8 words. No adjectives. No explanations. No speculation.")
+CONTEXT_WINDOW = 4096
+
+# Global state for background updates
+latest_caption = "Initializing..."
+latest_prefix = ""
+is_running = True
+
+# Use a session for connection pooling (faster than repeated posts)
+session = requests.Session()
 
 
 def generate_output_video_writer(input_video_path,
@@ -41,6 +57,11 @@ def generate_output_video_writer(input_video_path,
     if output_frame_width > 0:
         output_frame_height = int(output_frame_width *
                                   (frame_height / frame_width))
+    # Assign default frame width/height for RTSP streaming
+    elif output_frame_width == 0:
+        output_frame_width = 960
+        output_frame_height = 640
+
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 
     input_video_name, _ = os.path.splitext(input_video_path)
@@ -66,11 +87,9 @@ def frame_to_base64(frame, format=".jpg", quality=90):
     encode_param = []
     if format == ".jpg":
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-
     success, buffer = cv2.imencode(format, frame, encode_param)
     if not success:
         raise RuntimeError("Failed to encode image")
-
     return base64.b64encode(buffer).decode("utf-8")
 
 
@@ -122,11 +141,9 @@ def wrap_text_to_width(text, max_width, font, font_scale, thickness):
     words = text.split()
     lines = []
     current = ""
-
     for word in words:
         test = word if not current else current + " " + word
         (w, _), _ = cv2.getTextSize(test, font, font_scale, thickness)
-
         if w <= max_width:
             current = test
         else:
@@ -298,8 +315,141 @@ def draw_subtitle(frame,
         cv2.putText(frame, line, (margin, y + line_h), font, font_scale,
                     (255, 255, 255), thickness, cv2.LINE_AA)
         y += line_h + line_spacing
-
     return frame
+
+
+def streaming_inference_worker(task_queue, target_size, max_word_num):
+    """Background thread to handle Ollama API calls without blocking video."""
+
+    global latest_caption, latest_prefix, is_running
+
+    while is_running:
+        try:
+            # Block for a short time to wait for a frame
+            frame, prefix = task_queue.get(timeout=1)
+        except queue.Empty:
+            continue
+
+        resized_frame = cv2.resize(frame, target_size)
+        img_b64 = frame_to_base64(resized_frame)
+
+        payload = {
+            "model": MODEL,
+            "stream": True,
+            "messages": [{
+                "role": "user",
+                "content": PROMPT,
+                "images": [img_b64]
+            }],
+            "options": {
+                "num_ctx": CONTEXT_WINDOW
+            }
+        }
+
+        if max_word_num < 0:
+            max_word_num = 1e9
+
+        try:
+            with session.post(OLLAMA_URL,
+                              json=payload,
+                              stream=True,
+                              timeout=10) as resp:
+                resp.raise_for_status()
+                full_text = ""
+                for line in resp.iter_lines(decode_unicode=True):
+                    if not line: continue
+                    chunk = json.loads(line)
+                    delta = chunk.get("message", {}).get("content", "")
+                    if delta:
+                        full_text += delta
+                        # Update global caption dynamically for a "typing" effect
+                        latest_caption = full_text.strip()
+                        latest_prefix = prefix
+                        if len(full_text.split()) > max_word_num:
+                            break
+                    if chunk.get("done"): break
+        except Exception as e:
+            print(f"Inference Error: {e}")
+
+        task_queue.task_done()
+
+
+def run_streaming_caption_pipeline(input_video_path,
+                                   infer_every_sec=3,
+                                   target_size=(320, 320),
+                                   display_size=None,
+                                   max_word_num=-1,
+                                   output_video_dir=None,
+                                   output_suffix='output',
+                                   live_display=True,
+                                   verbose=False):
+
+    # Global variables
+    global is_running, latest_caption, latest_prefix
+
+    # Load video info
+    cap = cv2.VideoCapture(input_video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    step = int(fps * infer_every_sec)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Generate output video writer
+    if output_video_dir is not None:
+        output_video_writer, (output_frame_width, output_frame_height) = \
+            generate_output_video_writer(input_video_path, cap,
+                                         output_video_dir=output_video_dir,
+                                         output_suffix=output_suffix,
+                                         output_frame_width=-1,
+                                         verbose=True)
+
+    # Queue size 1 ensures we only process the *freshest* frame
+    task_queue = queue.Queue(maxsize=1)
+
+    # Start the worker thread
+    worker = threading.Thread(target=streaming_inference_worker,
+                              args=(task_queue, target_size, max_word_num),
+                              daemon=True)
+    worker.start()
+
+    # Main
+    frame_num = 0
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret: break
+
+            # Hand off frame to inference thread if it's time and worker is free
+            if frame_num % step == 0:
+                if task_queue.empty():
+                    video_time = f"{int(frame_num/fps)//3600:02d}:{(int(frame_num/fps)%3600)//60:02d}:{int(frame_num/fps)%60:02d}"
+                    task_queue.put((frame.copy(), f"[{video_time}]"))
+
+            # Always draw and show the most recent caption we have
+            canvas = frame.copy()
+            display_text = f"{latest_prefix} {latest_caption}"
+            draw_subtitle(canvas, display_text)
+
+            # Save result as video
+            if output_video_dir is not None:
+                output_video_writer.write(canvas)
+
+            # Live display
+            if live_display:
+                if display_size is not None:
+                    canvas = resize_with_padding(canvas, display_size)
+                cv2.imshow("Smooth VLM Stream", canvas)
+                # Press 'q' to quit
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+            frame_num += 1
+    finally:
+        is_running = False
+        cap.release()
+        if output_video_dir is not None:
+            # Release video writer
+            output_video_writer.release()
+        cv2.destroyAllWindows()
 
 
 def run_video_caption_pipeline(input_video_path,
@@ -338,7 +488,9 @@ def run_video_caption_pipeline(input_video_path,
             break
 
         # Caption
+        activated = False
         if frame_num % step == 0 and frame_num > step:
+            activated = True
             caption_start = time.time()
             video_time = frame_to_hhmmss(frame_num, fps)
             caption_prefix = f'[{video_time}]'
@@ -353,6 +505,18 @@ def run_video_caption_pipeline(input_video_path,
             if verbose:
                 print(f'[INFO] FPS: {1 / (time.time() - caption_start):.1f}')
             if not status:
+                break
+
+        # Live display
+        if not activated and live_display:
+            canvas = frame.copy()
+            canvas = draw_subtitle(canvas,
+                                   f'{caption_prefix} {caption}',
+                                   margin=0,
+                                   position='bottom')
+            cv2.imshow(f'VLM Narrator', canvas)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("[INFO] QUIT pressed")
                 break
 
         # Visualization for saving
@@ -378,25 +542,23 @@ def run_video_caption_pipeline(input_video_path,
 
 if __name__ == '__main__':
 
-    OLLAMA_URL = "http://localhost:11434/api/chat"
-    MODEL = "gemma3:4b"
-    # MODEL = "moondream:latest"
-    # MODEL = "qwen2.5vl:3b"
-    # MODEL = "qwen3-vl:2b"
-    PROMPT = ("Describe the main event in ONE short sentence."
-              "Maximum 8 words."
-              "No adjectives."
-              "No explanations."
-              "No speculation.")
-    CONTEXT_WINDOW = 4096
-
     input_video_paths = sys.argv[1:]
     for input_video_path in input_video_paths:
-        run_video_caption_pipeline(input_video_path,
-                                   infer_every_sec=3,
-                                   target_size=(320, 320),
-                                   display_size=(640, 360),
-                                   max_word_num=10,
-                                   output_video_dir='.',
-                                   live_display=not False,
-                                   verbose=True)
+
+        run_streaming_caption_pipeline(input_video_path,
+                                       infer_every_sec=3,
+                                       target_size=(320, 320),
+                                       display_size=(640, 360),
+                                       max_word_num=10,
+                                       output_video_dir='.',
+                                       live_display=not False,
+                                       verbose=True)
+
+        #run_video_caption_pipeline(input_video_path,
+        #                           infer_every_sec=3,
+        #                           target_size=(320, 320),
+        #                           display_size=(640, 360),
+        #                           max_word_num=10,
+        #                           output_video_dir='.',
+        #                           live_display=not False,
+        #                           verbose=True)
