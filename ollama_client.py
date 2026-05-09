@@ -419,6 +419,7 @@ def list_running_models(client, with_index=True):
                 ctx_num = model.get('context_length', 'N/A')
                 if ctx_num != 'N/A':
                     ctx_num = int(ctx_num)
+                expiires_at = model.get('expires_at', 'N/A')
 
                 # Model info
                 model_info = client.show_model_info(model['name'])
@@ -431,11 +432,11 @@ def list_running_models(client, with_index=True):
                 # Print
                 if with_index:
                     print(
-                        f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num})"
+                        f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num}, Expires: {expiires_at})"
                     )
                 else:
                     print(
-                        f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num})"
+                        f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num}, Expires: {expiires_at})"
                     )
 
         else:
