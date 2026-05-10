@@ -345,12 +345,16 @@ class OllamaClient:
         print("- Token Usage")
         print(f"  - Input Tokens: {session_stats['total_input_tokens']}")
         print(f"  - Output Tokens: {session_stats['total_output_tokens']}")
-        print(f"    - Thinking: {session_stats['thinking_tokens']}")
-        print(f"    - Content: {session_stats['content_tokens']}")
-        print(f"  - Total Tokens: {total}")
-        window_usage = total / session_stats['num_ctx']
+        print(f"    - Estimate Thinking: {session_stats['thinking_tokens']}")
+        print(f"    - Estimate Content: {session_stats['content_tokens']}")
+        print(f"  - Total (Input + Output) Tokens: {total}")
+
+        # Window usage (thinking excluded)
+        window_usage = \
+            session_stats['content_tokens'] / session_stats['num_ctx']
+        # window_usage = total / session_stats['num_ctx']
         print(
-            f"  - Context Window: {session_stats['num_ctx']} ({window_usage:.1%} Used)"
+            f"  - Context Window (thinking excluded): {session_stats['num_ctx']} ({window_usage:.1%} Used)"
         )
 
     @staticmethod
@@ -1062,7 +1066,9 @@ def chat_with_model(client, running_only=False):
             client.display_session_stats(session_stats)
 
             # Add assistant response to messages for context
-            messages.append({"role": "assistant", "content": full_response})
+            #messages.append({"role": "assistant", "content": full_response})
+            # Add assistant response to messages for context (thinking excluded)
+            messages.append({"role": "assistant", "content": content_response})
 
         # Handle exceptions
         except Exception as e:
