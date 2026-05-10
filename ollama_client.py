@@ -13,7 +13,72 @@ import threading
 import time
 from typing import Dict, Iterator, List, Optional, Union
 
+import ollama
 import requests
+from huggingface_hub import hf_hub_download
+from tokenizers import Tokenizer
+
+
+class OllamaTokenizer:
+    """
+    A lightweight, automated tokenizer handler for Ollama models.
+    Matches Ollama models to their HuggingFace equivalents to provide accurate token counts.
+    """
+
+    # Mapping Ollama families to lightweight HF tokenizer repos
+    _MAP = {
+        "llama": "meta-llama/Llama-3.1-8B",
+        "qwen": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+        "mistral": "mistralai/Mistral-7B-v0.1",
+        "phi": "microsoft/phi-2",
+        "gemma": "google/gemma-2b"
+    }
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self.tokenizer = self._load_auto_tokenizer(model_name)
+
+    def _load_auto_tokenizer(self, model_name: str) -> Tokenizer:
+        """Determines the correct tokenizer and loads it."""
+        try:
+            # Get model metadata from Ollama
+            info = ollama.show(model_name)
+            family = info.get('details', {}).get('family', '').lower()
+        except Exception:
+            family = model_name.lower()
+
+        # Match family or model name to our map
+        hf_repo = "gpt2"  # Global fallback
+        for key, repo in self._MAP.items():
+            if key in family or key in model_name.lower():
+                hf_repo = repo
+                break
+
+        try:
+            # Only download the tiny configuration file (~2MB)
+            file_path = hf_hub_download(repo_id=hf_repo,
+                                        filename="tokenizer.json",
+                                        local_files_only=False)
+            return Tokenizer.from_file(file_path)
+        except Exception as e:
+            # Fallback to a generic BPE tokenizer if download fails
+            return Tokenizer.from_pretrained("gpt2")
+
+    def count(self, text: str) -> int:
+        """Returns the number of tokens in a string."""
+        if not text:
+            return 0
+        return len(self.tokenizer.encode(text).ids)
+
+    def get_stats(self, thinking_txt: str, content_txt: str):
+        """Returns a dictionary with split token counts."""
+        t_count = self.count(thinking_txt)
+        c_count = self.count(content_txt)
+        return {
+            "thinking_tokens": t_count,
+            "content_tokens": c_count,
+            "total_tokens": t_count + c_count
+        }
 
 
 class OllamaClient:
@@ -280,6 +345,8 @@ class OllamaClient:
         print("- Token Usage")
         print(f"  - Input Tokens: {session_stats['total_input_tokens']}")
         print(f"  - Output Tokens: {session_stats['total_output_tokens']}")
+        print(f"    - Thinking: {session_stats['thinking_tokens']}")
+        print(f"    - Content: {session_stats['content_tokens']}")
         print(f"  - Total Tokens: {total}")
         window_usage = total / session_stats['num_ctx']
         print(
@@ -770,13 +837,18 @@ def chat_with_model(client, running_only=False):
         "- type /keepalive [options] to change model keep alive time [1m/5m/1h/0/-1]"
     )
 
-    # Load model to chat with
     stop_spinner = threading.Event()
     spinner_thread = threading.Thread(target=client._spinner_task,
                                       args=(stop_spinner, ))
     spinner_thread.start()
     start_time = time.time()
+
+    # Load model to chat with
     _ = client.load_model(model_name)
+
+    # Load tokenizer
+    tok = OllamaTokenizer(model_name)
+
     elapsed_time = time.time() - start_time
     stop_spinner.set()
     spinner_thread.join()
@@ -878,6 +950,10 @@ def chat_with_model(client, running_only=False):
         first_token_time, last_token_time = None, None
         first_token_latency, tps = None, None
 
+        # Tracking states for formatting
+        currently_thinking = False
+        content_started = False
+
         try:
             # Send request to server
             response, messages = client.chat(model_name,
@@ -901,6 +977,11 @@ def chat_with_model(client, running_only=False):
                             # Stop the spinner
                             stop_spinner.set()
                             spinner_thread.join()
+
+                            # Print Thinking Block Header
+                            print(f"\n\033[90m[THINKING]\033[0m")
+                            currently_thinking = True
+
                         # Record time of latest token
                         last_token_time = time.time()
                         # Display with typing effect
@@ -910,6 +991,12 @@ def chat_with_model(client, running_only=False):
 
                     if "message" in chunk and chunk["message"].get("content"):
                         content = chunk["message"]["content"]
+
+                        # If we were just thinking, close the block before printing content
+                        if currently_thinking:
+                            print(f"\n\033[90m[END THOUGHTS]\033[0m\n")
+                            currently_thinking = False
+
                         # Record time of first token
                         if not first_token_received:
                             first_token_time = time.time()
@@ -917,6 +1004,7 @@ def chat_with_model(client, running_only=False):
                             # Stop the spinner
                             stop_spinner.set()
                             spinner_thread.join()
+
                         # Record time of latest token
                         last_token_time = time.time()
                         # Display with typing effect
@@ -930,6 +1018,11 @@ def chat_with_model(client, running_only=False):
 
                     # Capture final statistics from the last chunk
                     if chunk.get("done"):
+
+                        # Ensure we close thinking block if model finished without content
+                        if currently_thinking:
+                            print(f"\n\033[90m[END THOUGHTS]\033[0m\n")
+
                         session_stats["total_input_tokens"] += chunk.get(
                             "prompt_eval_count", 0)
                         session_stats["total_output_tokens"] += chunk.get(
@@ -960,10 +1053,10 @@ def chat_with_model(client, running_only=False):
             session_stats['tps'] = tps
             session_stats['num_ctx'] = client.num_ctx
 
-            # start = time.time()
-            # print(client.count_tokens(model_name, thinking_response))
-            # print(client.count_tokens(model_name, content_response))
-            # print(time.time() - start)
+            # Count token and update stats
+            counts = tok.get_stats(thinking_response, content_response)
+            session_stats["thinking_tokens"] = counts["thinking_tokens"]
+            session_stats["content_tokens"] = counts["content_tokens"]
 
             # Show stats
             client.display_session_stats(session_stats)
