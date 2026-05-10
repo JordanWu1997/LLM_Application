@@ -450,6 +450,8 @@ def list_all_models(client, with_index=True, with_info=True):
     """
     List all models faster using parallel threads for metadata fetching.
     """
+    models = []
+
     try:
         models = client.list_models()
         if not models:
@@ -521,6 +523,7 @@ def list_running_models(client, with_index=True):
         Each dictionary includes 'name', 'capability', and 'size' fields.
     """
     models = []
+
     try:
         models = client.list_running_models()
         if models:
