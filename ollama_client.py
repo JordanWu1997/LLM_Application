@@ -359,14 +359,22 @@ class OllamaClient:
         print("- Token Usage")
         print(f"  - Input Tokens: {session_stats['total_input_tokens']}")
         print(f"  - Output Tokens: {session_stats['total_output_tokens']}")
-        print(f"    - Estimate Thinking: {session_stats['thinking_tokens']}")
-        print(f"    - Estimate Content: {session_stats['content_tokens']}")
+        if session_stats['thinking_tokens'] is not None:
+            print(
+                f"    - Estimate Thinking: {session_stats['thinking_tokens']}")
+        if session_stats['content_tokens'] is not None:
+            print(f"    - Estimate Content: {session_stats['content_tokens']}")
         print(f"  - Total (Input + Output) Tokens: {total}")
 
         # Window usage (thinking excluded)
-        window_usage = \
-            session_stats['content_tokens'] / session_stats['num_ctx']
-        self.ctx_window_used_token += session_stats['content_tokens']
+        if session_stats['content_tokens'] is not None:
+            window_usage = \
+                session_stats['content_tokens'] / session_stats['num_ctx']
+            self.ctx_window_used_token += session_stats['content_tokens']
+        else:
+            window_usage = \
+                session_stats['total_output_tokens'] / session_stats['num_ctx']
+            self.ctx_window_used_token += session_stats['total_output_tokens']
         ctx_window_usage = \
             self.ctx_window_used_token / session_stats['num_ctx']
         print(
@@ -693,6 +701,7 @@ def generate_completion_with_model(client, running_only=False):
         # Init
         image_paths = []
         follow_up_input = None
+        client.ctx_window_used_token = 0
 
         # User input
         user_input = input("\n>>> You: \n")
@@ -700,7 +709,9 @@ def generate_completion_with_model(client, running_only=False):
             break
         elif user_input.lower() == '/history':
             print('\n>>> History')
+            print(f"\n\033[90m[START OF HiSTORY]\033[0m")
             print(history)
+            print(f"\n\033[90m[END OF HISTORY]\033[0m")
             continue
             user_input = input("\n>>> You: \n")
         elif user_input.lower() == '/clear':
@@ -829,6 +840,8 @@ def generate_completion_with_model(client, running_only=False):
             session_stats['first_token_latency'] = first_token_latency
             session_stats['tps'] = tps
             session_stats['num_ctx'] = client.num_ctx
+            session_stats["thinking_tokens"] = None
+            session_stats["content_tokens"] = None
 
             # Show stats
             client.display_session_stats(session_stats)
