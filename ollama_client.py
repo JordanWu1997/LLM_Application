@@ -170,13 +170,25 @@ class OllamaClient:
         Returns:
             Response dictionary with load status
         """
-        response = requests.post(f"{self.base_url}/generate",
-                                 json={
-                                     "model": model_name,
-                                     "keep_alive": self.keep_alive
-                                 })
-        response.raise_for_status()
-        return response.json()
+        try:
+            stop_spinner = threading.Event()
+            spinner_thread = threading.Thread(target=self._spinner_task,
+                                              args=(stop_spinner, ))
+            spinner_thread.start()
+            response = requests.post(f"{self.base_url}/generate",
+                                     json={
+                                         "model": model_name,
+                                         "keep_alive": self.keep_alive
+                                     })
+            response.raise_for_status()
+            return response.json()
+        except KeyboardInterrupt:
+            # This is critical for stopping the request mid-load
+            print(f"\n[INTERRUPT] Loading {model_name} aborted.")
+            return {"status": "aborted"}
+        finally:
+            stop_spinner.set()
+            spinner_thread.join()
 
     def unload_model(self, model_name: str) -> Dict:
         """
@@ -573,7 +585,10 @@ def load_model(client):
     try:
         print(f"\n[INFO] Loading model {model_name}...")
         response = client.load_model(model_name)
-        print(f"Model loaded successfully: {response}")
+        if response.get("status") != "aborted":
+            print(f"Model loaded successfully: {response}")
+        else:
+            print(f"Model is not loaded: {response}")
     except Exception as e:
         print(f"[ERROR] Error loading model: {e}")
 
@@ -627,17 +642,20 @@ def generate_completion_with_model(client, running_only=False):
         all_models = list_all_models(client)
 
     # Convert index to model name
-    model_name = input("\nEnter model name to generate_completion with: ")
-    try:
-        model_index = int(model_name)
-        model_name = all_models[model_index - 1]['name']
-    except ValueError:
-        pass
-    except IndexError:
-        pass
-    if model_name not in [model['name'] for model in all_models]:
-        print(f'[ERROR] Not a valid model name: {model_name}')
-        return
+    if len(all_models) == 1:
+        model_name = all_models[0]['name']
+    else:
+        model_name = input("\nEnter model name to generate_completion with: ")
+        try:
+            model_index = int(model_name)
+            model_name = all_models[model_index - 1]['name']
+        except ValueError:
+            pass
+        except IndexError:
+            pass
+        if model_name not in [model['name'] for model in all_models]:
+            print(f'[ERROR] Not a valid model name: {model_name}')
+            return
 
     # Initial context settings
     messages = []
@@ -660,15 +678,9 @@ def generate_completion_with_model(client, running_only=False):
     print('- type /clear to clear history')
 
     # Load model to generate completion
-    stop_spinner = threading.Event()
-    spinner_thread = threading.Thread(target=client._spinner_task,
-                                      args=(stop_spinner, ))
-    spinner_thread.start()
     start_time = time.time()
     _ = client.load_model(model_name)
     elapsed_time = time.time() - start_time
-    stop_spinner.set()
-    spinner_thread.join()
     print(f'\nLoading {model_name} took {elapsed_time:.3f} sec')
 
     # Main loop
@@ -821,6 +833,12 @@ def generate_completion_with_model(client, running_only=False):
             # Add generated response to history
             history = f'{user_input} {full_response}'
 
+        except KeyboardInterrupt:
+            stop_spinner.set()  # Stop the spinner thread
+            spinner_thread.join()
+            print("\n\n[INTERRUPTED] Stopping generation...")
+            continue
+
         # Handle exceptions
         except Exception as e:
             print(f"\n[ERROR] Error during chat: {e}")
@@ -843,17 +861,20 @@ def chat_with_model(client, running_only=False):
         all_models = list_all_models(client)
 
     # Convert index to model name
-    model_name = input("\nEnter model name to chat with: ")
-    try:
-        model_index = int(model_name)
-        model_name = all_models[model_index - 1]['name']
-    except ValueError:
-        pass
-    except IndexError:
-        pass
-    if model_name not in [model['name'] for model in all_models]:
-        print(f'[ERROR] Not a valid model name: {model_name}')
-        return
+    if len(all_models) == 1:
+        model_name = all_models[0]['name']
+    else:
+        model_name = input("\nEnter model name to chat with: ")
+        try:
+            model_index = int(model_name)
+            model_name = all_models[model_index - 1]['name']
+        except ValueError:
+            pass
+        except IndexError:
+            pass
+        if model_name not in [model['name'] for model in all_models]:
+            print(f'[ERROR] Not a valid model name: {model_name}')
+            return
 
     # Initial context settings
     messages = []
@@ -868,11 +889,6 @@ def chat_with_model(client, running_only=False):
     print(
         "- type /keepalive [options] to change model keep alive time [1m/5m/1h/0/-1]"
     )
-
-    stop_spinner = threading.Event()
-    spinner_thread = threading.Thread(target=client._spinner_task,
-                                      args=(stop_spinner, ))
-    spinner_thread.start()
     start_time = time.time()
 
     # Load model to chat with
@@ -882,8 +898,6 @@ def chat_with_model(client, running_only=False):
     tok = OllamaTokenizer(model_name)
 
     elapsed_time = time.time() - start_time
-    stop_spinner.set()
-    spinner_thread.join()
     print(f'\nLoading {model_name} took {elapsed_time:.3f} sec')
 
     # Main loop
@@ -1097,6 +1111,12 @@ def chat_with_model(client, running_only=False):
             #messages.append({"role": "assistant", "content": full_response})
             # Add assistant response to messages for context (thinking excluded)
             messages.append({"role": "assistant", "content": content_response})
+
+        except KeyboardInterrupt:
+            stop_spinner.set()  # Stop the spinner thread
+            spinner_thread.join()
+            print("\n\n[INTERRUPTED] Stopping generation...")
+            continue
 
         # Handle exceptions
         except Exception as e:
