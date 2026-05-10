@@ -11,6 +11,7 @@ import json
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Iterator, List, Optional, Union
 
 import ollama
@@ -106,6 +107,7 @@ class OllamaClient:
         self.think = think
         self.stream = stream
         self.keep_alive = keep_alive
+        self.ctx_window_usage = 0.0
 
     def update_base_url(self):
         self.base_url = f"http://{self.host}:{self.port}/api"
@@ -327,8 +329,7 @@ class OllamaClient:
                     except json.JSONDecodeError:
                         yield {"error": "Failed to parse streaming response"}
 
-    @staticmethod
-    def display_session_stats(session_stats):
+    def display_session_stats(self, session_stats):
         # Stats
         print("\n[Statistics]")
         # TTFT
@@ -353,8 +354,9 @@ class OllamaClient:
         window_usage = \
             session_stats['content_tokens'] / session_stats['num_ctx']
         # window_usage = total / session_stats['num_ctx']
+        self.ctx_window_usage += window_usage
         print(
-            f"  - Context Window (thinking excluded): {session_stats['num_ctx']} ({window_usage:.1%} Used)"
+            f"  - Context Window: {session_stats['num_ctx']} (+{window_usage:.1%}, {self.ctx_window_usage:.1%} Used)"
         )
 
     @staticmethod
@@ -422,42 +424,66 @@ class OllamaClient:
             sys.stdout.flush()
 
 
-def list_all_models(client, with_index=True):
+def list_all_models(client, with_index=True, with_info=True):
     """
-    List all available models on the specified client.
-
-    Args:
-        with_index (bool): If True, include model index in the output. Default is True.
-
-    Returns:
-        list: A list of dictionaries containing information about each model.
+    List all models faster using parallel threads for metadata fetching.
     """
-
-    models = []
     try:
         models = client.list_models()
+        if not models:
+            print("\nNo models found.")
+            return []
+
+        print(f"\nFetching info for {len(models)} models...")
+
+        # This list will store our results in the correct order
+        results = [None] * len(models)
+
+        def fetch_info(index, model):
+            """Worker function to fetch info for a single model."""
+            name = model['name']
+            size_raw = model.get('size', 0)
+            size_gb = f"{float(size_raw) / (1024**3):.2f}" if size_raw else "N/A"
+
+            info_str = ""
+            if with_info:
+                # Parallel API call
+                model_info = client.show_model_info(name)
+                capability = model_info.get('capabilities', 'N/A')
+                params = model_info['details'].get('parameter_size', 'N/A')
+                info_str = f"{capability}, Param: {params}, "
+
+            prefix = f"{index + 1:02d}. " if with_index else "- "
+            return index, f"{prefix}{name} ({info_str}Size: {size_gb} GB)"
+
+        # Use ThreadPoolExecutor to fetch info in parallel
+        # max_workers=10 is usually a sweet spot for local Ollama servers
+        try:
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_model = {
+                    executor.submit(fetch_info, i, m): i
+                    for i, m in enumerate(models)
+                }
+
+                for future in as_completed(future_to_model):
+                    idx, text = future.result()
+                    results[idx] = text
+        except KeyboardInterrupt:
+            # Handle Ctrl+C during parallel execution
+            print("\n[INTERRUPT] Cancelling data fetch...")
+            executor.shutdown(wait=False, cancel_futures=True)
+            return models
+
+        # Print final ordered list
         print("\nAvailable models:")
-        for i, model in enumerate(models):
-            model_info = client.show_model_info(model['name'])
-            model_size = model.get('size', 'N/A')
-            if model_size != 'N/A':
-                model_size = float(model_size) / 1024 / 1024 / 1024
-                model_size = f'{model_size:.2f}'
-            model_capability = model_info.get('capabilities', 'N/A')
-            model_params = model_info['details'].get('parameter_size', 'N/A')
-            model_quant = model_info['details'].get('quantization_level',
-                                                    'N/A')
-            if with_index:
-                print(
-                    f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB)"
-                )
-            else:
-                print(
-                    f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB)"
-                )
+        for line in results:
+            if line:
+                print(line)
+                time.sleep(0.05)
 
     except Exception as e:
         print(f"Error: {e}")
+
     return models
 
 
@@ -512,8 +538,10 @@ def list_running_models(client, with_index=True):
 
         else:
             print("\nNo models currently running.")
+
     except Exception as e:
         print(f"Error: {e}")
+
     return models
 
 
