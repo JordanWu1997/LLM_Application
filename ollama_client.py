@@ -47,6 +47,7 @@ class OllamaTokenizer:
             family = info.get('details', {}).get('family', '').lower()
         except Exception:
             family = model_name.lower()
+        self.model_family = family
 
         # Match family or model name to our map
         hf_repo = "gpt2"  # Global fallback
@@ -107,7 +108,7 @@ class OllamaClient:
         self.think = think
         self.stream = stream
         self.keep_alive = keep_alive
-        self.ctx_window_usage = 0.0
+        self.ctx_window_used_token = 0
 
     def update_base_url(self):
         self.base_url = f"http://{self.host}:{self.port}/api"
@@ -365,10 +366,11 @@ class OllamaClient:
         # Window usage (thinking excluded)
         window_usage = \
             session_stats['content_tokens'] / session_stats['num_ctx']
-        # window_usage = total / session_stats['num_ctx']
-        self.ctx_window_usage += window_usage
+        self.ctx_window_used_token += session_stats['content_tokens']
+        ctx_window_usage = \
+            self.ctx_window_used_token / session_stats['num_ctx']
         print(
-            f"  - Context Window: {session_stats['num_ctx']} (+{window_usage:.1%}, {self.ctx_window_usage:.1%} Used)"
+            f"  - Context Window: {session_stats['num_ctx']} (+{window_usage:.1%} Usage, {ctx_window_usage:.1%} Used in total)"
         )
 
     @staticmethod
@@ -660,6 +662,7 @@ def generate_completion_with_model(client, running_only=False):
     # Initial context settings
     messages = []
     session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
+    client.ctx_window_used_token = 0
 
     # Opening
     print(f"\nGenerate completion with {model_name}")
@@ -879,6 +882,7 @@ def chat_with_model(client, running_only=False):
     # Initial context settings
     messages = []
     session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
+    client.ctx_window_used_token = 0
 
     # Opening
     print(f"\nChat with {model_name}")
@@ -889,16 +893,18 @@ def chat_with_model(client, running_only=False):
     print(
         "- type /keepalive [options] to change model keep alive time [1m/5m/1h/0/-1]"
     )
-    start_time = time.time()
 
     # Load model to chat with
+    start_time = time.time()
     _ = client.load_model(model_name)
-
-    # Load tokenizer
-    tok = OllamaTokenizer(model_name)
-
     elapsed_time = time.time() - start_time
     print(f'\nLoading {model_name} took {elapsed_time:.3f} sec')
+
+    # Load tokenizer
+    start_time = time.time()
+    tok = OllamaTokenizer(model_name)
+    elapsed_time = time.time() - start_time
+    print(f'Loading {tok.model_family} tokenizer took {elapsed_time:.3f} sec')
 
     # Main loop
     while True:
