@@ -22,7 +22,7 @@ import sys
 import requests
 from tqdm import tqdm
 
-from ollama_utils import check_args_connections, get_available_models
+from ollama_utils import check_args_connections
 
 
 def get_existing_master_tags(filepath):
@@ -268,7 +268,7 @@ if __name__ == '__main__':
         tag_file_path = args.tag_file_path
 
     # Check if Ollama connection/model is available
-    check_args_connections(args)
+    args = check_args_connections(args)
 
     # Main
     for input_md_file_path in tqdm(args.input_markdown_file_paths):

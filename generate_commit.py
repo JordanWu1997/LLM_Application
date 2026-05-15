@@ -22,7 +22,7 @@ import tempfile
 
 import requests
 
-from ollama_utils import check_args_connections, get_available_models
+from ollama_utils import check_args_connections
 
 
 def get_git_diff():
@@ -140,7 +140,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Check if Ollama connection/model is available
-    check_args_connections(args)
+    args = check_args_connections(args)
 
     # Git diff
     diff = get_git_diff()

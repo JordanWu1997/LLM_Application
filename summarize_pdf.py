@@ -16,6 +16,8 @@ import pymupdf
 import requests
 from tqdm import tqdm
 
+from ollama_utils import check_args_connections
+
 # Global structure mapping to ensure consistency between CLI arguments and parsing indices
 STRUCT_KEYS = [
     "Introduction", "Methods", "Results", "Discussion", "Conclusion"
@@ -436,6 +438,9 @@ def main():
         "Size of the context window for ollama model used to generate the next token (default: 8192)"
     )
     args = parser.parse_args()
+
+    # Check if Ollama connection/model is available
+    check_args_connections(args)
 
     # Find pdf file paths
     print(f"[INFO] 📋 Academic PDF Structural Extraction Engine")

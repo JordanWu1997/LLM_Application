@@ -14,6 +14,8 @@ r"""
 # ========================================================================== #
 """
 
+import sys
+
 import requests
 
 
@@ -64,6 +66,7 @@ def check_args_connections(args):
                 input(
                     f"\nSelect a model number (1-{len(available_models)}): "))
             selected_model = available_models[choice - 1]
+            args.model = selected_model
             print(f"[*] Switched to model: {selected_model}")
         except (ValueError, IndexError):
             print("Invalid selection. Exiting.")
@@ -72,10 +75,12 @@ def check_args_connections(args):
     print()
     print(f"--- Configuration Loaded ---")
     print(f"URL: {base_url}")
-    print(f"Model: {selected_model}")
+    print(f"Model: {args.model}")
     print(f"Context Window: {args.ctx}")
     print(f"---------------------------")
     print()
+
+    return args
 
 
 if __name__ == "__main__":

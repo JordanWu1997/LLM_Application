@@ -21,6 +21,8 @@ import sys
 
 import requests
 
+from ollama_utils import check_args_connections
+
 
 def get_journal_logs(since, until, priority='3'):
     """Fetches systemd logs for the specific time range."""
@@ -129,6 +131,9 @@ if __name__ == "__main__":
         "Size of the context window for ollama model used to generate the next token (default: 8192)"
     )
     args = parser.parse_args()
+
+    # Check if Ollama connectio/model is available
+    args = check_args_connections(args)
 
     # Calculate Defaults
     today_start = datetime.datetime.now().strftime("%Y-%m-%d 00:00:00")

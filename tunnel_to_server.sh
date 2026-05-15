@@ -8,5 +8,5 @@
 # Description :
 ###########################################################
 
-ssh -L 11434:localhost:11433 ubuntu@ubuntu -t 'nvtop'
-#ssh -L 11434:localhost:11434 pop-os-lan -t 'nvtop'
+#ssh -L 11434:localhost:11433 ubuntu@ubuntu-desktop -t 'nvtop'
+ssh -L 11434:localhost:11434 pop-os-lan -t 'nvtop'
