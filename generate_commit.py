@@ -150,7 +150,7 @@ if __name__ == "__main__":
     # Message
     ai_message = generate_streaming_commit(
         diff,
-        ollama_url=f'http://{args.host}:{args.port}/api/generate',
+        ollama_url=f'http://{args.host}:{args.port}',
         model=args.model,
         context_window=args.ctx)
     if not ai_message:
