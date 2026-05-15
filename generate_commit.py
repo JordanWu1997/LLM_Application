@@ -39,7 +39,7 @@ def get_available_models(base_url):
 def check_args_connections(args):
 
     base_url = f"http://{args.host}:{args.port}"
-    print(f"[*] Checking connection to {base_url}...")
+    print(f"\n[*] Checking connection to {base_url}...")
     try:
         # We use the version or tags endpoint to verify the server is alive
         hb = requests.get(f"{base_url}/api/tags", timeout=5)
@@ -75,11 +75,13 @@ def check_args_connections(args):
             print("Invalid selection. Exiting.")
             sys.exit(1)
 
+    print()
     print(f"--- Configuration Loaded ---")
     print(f"URL: {base_url}")
     print(f"Model: {selected_model}")
     print(f"Context Window: {args.ctx}")
     print(f"---------------------------")
+    print()
 
 
 def get_git_diff():
@@ -133,13 +135,13 @@ def generate_streaming_commit(diff,
 
         # Token Truncation Check
         processed = metadata.get("prompt_eval_count", 0)
-        if processed >= CONTEXT_WINDOW:
+        if processed >= context_window:
             print(
-                f"\033[93m⚠️  Warning: Input reached {CONTEXT_WINDOW} tokens and was truncated.\033[0m"
+                f"\033[93m⚠️  Warning: Input reached {context_window} tokens and was truncated.\033[0m"
             )
         else:
             print(
-                f"\033[90m(Tokens used: {processed}/{CONTEXT_WINDOW})\033[0m")
+                f"\033[90m(Tokens used: {processed}/{context_window})\033[0m")
 
         return full_message.strip()
 
@@ -184,7 +186,7 @@ if __name__ == "__main__":
         "The port number the Ollama server is listening on (default: 11434)")
     parser.add_argument("--model",
                         default="gemma4:e4b-8k-gpu",
-                        help="Model name to use")
+                        help="Model name to use (default: gemma4:e4b-8k-gpu)")
     parser.add_argument(
         "--ctx",
         type=int,
