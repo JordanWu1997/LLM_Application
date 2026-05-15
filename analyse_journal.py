@@ -37,7 +37,11 @@ def get_journal_logs(since, until, priority='3'):
         return None
 
 
-def stream_log_analysis(log_data):
+def stream_log_analysis(log_data,
+                        ollama_url='http://localhost:11434/api/generate',
+                        model="gemma4:e4b",
+                        context_window=4096):
+
     system_prompt = (
         "You are a Linux System Expert. Analyze the following logs. "
         "1. Identify the most critical error. "
@@ -45,11 +49,11 @@ def stream_log_analysis(log_data):
         "3. Provide a command-line solution to fix it.")
 
     payload = {
-        "model": MODEL,
+        "model": model,
         "prompt": f"{system_prompt}\n\nLOG DATA:\n{log_data}",
         "stream": True,
         "options": {
-            "num_ctx": CONTEXT_WINDOW,
+            "num_ctx": context_window,
             "temperature": 0.1
         }
     }
@@ -58,10 +62,10 @@ def stream_log_analysis(log_data):
     metadata = {}
 
     try:
-        response = requests.post(OLLAMA_URL, json=payload, stream=True)
+        response = requests.post(ollama_url, json=payload, stream=True)
         response.raise_for_status()
 
-        print(f"\n[INFO] 🔍 Analyzing logs with {MODEL}...\n" + "=" * 30)
+        print(f"\n[INFO] 🔍 Analyzing logs with {model}...\n" + "=" * 30)
 
         for line in response.iter_lines():
             if line:
@@ -79,17 +83,17 @@ def stream_log_analysis(log_data):
 
         # Token Truncation Check
         prompt_tokens = metadata.get("prompt_eval_count", 0)
-        if prompt_tokens >= CONTEXT_WINDOW:
+        if prompt_tokens >= context_window:
             print(f"\033[91m⚠️  CRITICAL: Log data was TRUNCATED.\033[0m")
             print(
-                f"The logs used {prompt_tokens} tokens, hitting the {CONTEXT_WINDOW} limit."
+                f"The logs used {prompt_tokens} tokens, hitting the {context_window} limit."
             )
             print(
                 "Action: Shorten the time interval or increase CONTEXT_WINDOW.\n"
             )
         else:
             print(
-                f"\033[90m[Analysis complete. Context used: {prompt_tokens}/{CONTEXT_WINDOW} tokens]\033[0m\n"
+                f"\033[90m[Analysis complete. Context used: {prompt_tokens}/{context_window} tokens]\033[0m\n"
             )
 
     except requests.exceptions.RequestException as e:
@@ -98,10 +102,32 @@ def stream_log_analysis(log_data):
 
 if __name__ == "__main__":
 
-    # Configuration
-    OLLAMA_URL = "http://localhost:11434/api/generate"
-    MODEL = "qwen2.5-coder:7b"
-    CONTEXT_WINDOW = 128 * 1024  # Logs need a larger window
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Analyze journal w/ Ollama")
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="localhost",
+        help=
+        "The hostname or IP address of the Ollama server (default: localhost)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=11434,
+        help=
+        "The port number the Ollama server is listening on (default: 11434)")
+    parser.add_argument("--model",
+                        default="gemma4:e4b-8k-gpu",
+                        help="Model name to use (default: gemma4:e4b-8k-gpu)")
+    parser.add_argument(
+        "--ctx",
+        type=int,
+        default=8192,
+        help=
+        "The size of the context window used to generate the next token (default: 8192)"
+    )
+    args = parser.parse_args()
 
     # Calculate Defaults
     today_start = datetime.datetime.now().strftime("%Y-%m-%d 00:00:00")
@@ -126,4 +152,8 @@ if __name__ == "__main__":
         sys.exit("[INFO] ✅ No warning or error logs found for this period.")
 
     # Analyze retrieved logs
-    stream_log_analysis(logs)
+    stream_log_analysis(
+        logs,
+        ollama_url=f'http://{args.host}:{args.port}/api/generate',
+        model=args.model,
+        context_window=args.ctx)
