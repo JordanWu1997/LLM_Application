@@ -34,7 +34,7 @@ def get_git_diff():
 
 
 def generate_streaming_commit(diff,
-                              ollama_url='http://localhost:11434/api/generate',
+                              ollama_url='http://localhost:11434',
                               model="gemma4:e4b",
                               context_window=4096):
 
@@ -55,7 +55,9 @@ def generate_streaming_commit(diff,
 
     try:
         # Use stream=True in requests
-        response = requests.post(ollama_url, json=payload, stream=True)
+        response = requests.post(f'{ollama_url}/api/generate',
+                                 json=payload,
+                                 stream=True)
         response.raise_for_status()
 
         print("\n[INFO] 🤖 Generating: ", end="", flush=True)

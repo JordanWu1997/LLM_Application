@@ -27,7 +27,9 @@ from ollama_utils import check_args_connections, get_available_models
 
 def get_existing_master_tags(filepath):
     """Gets ## Headings from TAG.md"""
-    if not os.path.exists(filepath) or filepath is None:
+    if filepath is None:
+        return []
+    if not os.path.exists(filepath):
         return []
     with open(filepath, 'r') as f:
         return [
@@ -252,12 +254,12 @@ if __name__ == '__main__':
         help=
         "The size of the context window used to generate the next token (default: 8192)"
     )
-    parser.add_argument(
-        "--tag_file_path",
-        default="$HOME/Documents/KNOWLEDGE_BASE/TAG.md",
-        help=
-        "The size of the context window used to generate the next token (default: 8192)"
-    )
+    parser.add_argument("--tag_file_path",
+                        default="$HOME/Documents/KNOWLEDGE_BASE/TAG.md",
+                        help="The file contains pre-defined tags")
+    parser.add_argument('--no-inplace',
+                        action='store_true',
+                        help='Stop update keyword to input file in place')
     args = parser.parse_args()
 
     # Tag file in vimwiki (tag stores as level-2 heading in markdown)
@@ -271,10 +273,11 @@ if __name__ == '__main__':
     # Main
     for input_md_file_path in tqdm(args.input_markdown_file_paths):
         print(f'[INFO] INPUT: {input_md_file_path}')
-        tags = extract_md_file_keyword(input_md_file_path,
-                                       tag_file_path,
-                                       ollama_url=ollama_url,
-                                       model_name=model_name,
-                                       ctx_window=ctx_window,
-                                       verbose=True,
-                                       update_in_place=True)
+        tags = extract_md_file_keyword(
+            input_md_file_path,
+            tag_file_path,
+            ollama_url=f'http://{args.host}:{args.port}',
+            model_name=args.model,
+            ctx_window=args.ctx,
+            verbose=True,
+            update_in_place=not args.no_inplace)

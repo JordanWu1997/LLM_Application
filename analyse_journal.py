@@ -38,7 +38,7 @@ def get_journal_logs(since, until, priority='3'):
 
 
 def stream_log_analysis(log_data,
-                        ollama_url='http://localhost:11434/api/generate',
+                        ollama_url='http://localhost:11434',
                         model="gemma4:e4b",
                         context_window=4096):
 
@@ -62,7 +62,9 @@ def stream_log_analysis(log_data,
     metadata = {}
 
     try:
-        response = requests.post(ollama_url, json=payload, stream=True)
+        response = requests.post(f'{ollama_url}/api/generate',
+                                 json=payload,
+                                 stream=True)
         response.raise_for_status()
 
         print(f"\n[INFO] 🔍 Analyzing logs with {model}...\n" + "=" * 30)
@@ -109,14 +111,13 @@ if __name__ == "__main__":
         "--host",
         type=str,
         default="localhost",
-        help=
-        "The hostname or IP address of the Ollama server (default: localhost)")
+        help="Hostname or IP address of the Ollama server (default: localhost)"
+    )
     parser.add_argument(
         "--port",
         type=int,
         default=11434,
-        help=
-        "The port number the Ollama server is listening on (default: 11434)")
+        help="Port number the Ollama server is listening on (default: 11434)")
     parser.add_argument("--model",
                         default="gemma4:e4b-8k-gpu",
                         help="Model name to use (default: gemma4:e4b-8k-gpu)")
@@ -125,7 +126,7 @@ if __name__ == "__main__":
         type=int,
         default=8192,
         help=
-        "The size of the context window used to generate the next token (default: 8192)"
+        "Size of the context window for ollama model used to generate the next token (default: 8192)"
     )
     args = parser.parse_args()
 
@@ -152,8 +153,7 @@ if __name__ == "__main__":
         sys.exit("[INFO] ✅ No warning or error logs found for this period.")
 
     # Analyze retrieved logs
-    stream_log_analysis(
-        logs,
-        ollama_url=f'http://{args.host}:{args.port}/api/generate',
-        model=args.model,
-        context_window=args.ctx)
+    stream_log_analysis(logs,
+                        ollama_url=f'http://{args.host}:{args.port}',
+                        model=args.model,
+                        context_window=args.ctx)
