@@ -20,6 +20,8 @@ import requests
 from huggingface_hub import hf_hub_download
 from tokenizers import Tokenizer
 
+from ollama_utils import get_input_from_editor
+
 
 class OllamaTokenizer:
     """
