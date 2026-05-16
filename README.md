@@ -4,31 +4,46 @@
 
 ## App List
 
-- [O] Ollama client
+- [ ] Ollama client
   - [X] Model Management
-  - [o] Chat/Generation
+  - [X] Chat/Generation
     - [X] w/ Texts
     - [X] w/ Images
-    - [ ] w/ Files (txt, csv, etc.)
+    - [X] w/ Files (txt, csv, etc.)
+  - [ ] STT Input
+  - [ ] TTS Output
+    - [ ] Integrate w/ `espeak` or TTS tools
+
+### Text
+
 - [X] PDF summarizer
-- [X] Video narrator
 - [X] Git commit message generator
 - [X] Logger/Journal analyzer
 - [X] Markdown note keyword/tag generator
-- [o] Translate bot w/ `translategemma`
+- [X] Translate bot w/ `translategemma`
   - [X] Auto detect input language w/ langdetect
-  - [ ] Integrate w/ `espeak` or TTS tools
-- [X] OCR w/ VLM w/ `glm-ocr`
-- [ ] SQL assistant
-- [X] Object detection integrated VLM classification
-  - Check my CV_Application Repo
 - [X] Code reviewer
-  - Here I just integrate ollama models into my vim dev environment with vim-ai
+  - Here I just integrate ollama models into my vim dev environment with [vim-ai](https://github.com/madox2/vim-ai) vim-plug
+    - My [Vim-Tmux workflow](https://github.com/JordanWu1997/Vim_Tmux_Config)
+- [ ] SQL assistant
+- [ ] Shell assistant
+- [ ] Note/Diary organizer
+
+### Video
+
+- [X] Video narrator
+- [X] OCR w/ VLM w/ `glm-ocr`
+- [X] Object detection integrated VLM classification
+  - Check my [CV_Application](https://github.com/JordanWu1997/CV_Application) Repo
+
+## RAG List
+
+- [ ] Knowledge Graph for [My Personal knowledge](https://github.com/JordanWu1997/Knowledge_Base)
 
 ## Agent List
 
 - [ ] OpenClaw
-- Agentic Coding
+- [ ] Agentic Coding
   - [ ] Planer
   - [ ] Code builder
   - [ ] Code tester/reviewer
