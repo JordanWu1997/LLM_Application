@@ -887,7 +887,7 @@ def generate_completion_with_model(client, running_only=False):
         - /exit             : Exit the session
         - /edit             : Open editor (Vim/Nano) to write a multi-line prompt
         - /system [text]    : Update system prompt (leave blank to open editor)
-        - /persona [name]   : Load a preset system prompt (type /persona to list all)
+        - /persona [name]   : Load a preset system prompt (leave blank to list all)
 
         \033[93mHistory & Flow:\033[0m
         - /continue (or /c) : Continue generation (opens editor to review/append)
@@ -1114,7 +1114,7 @@ def chat_with_model(client, running_only=False):
         - /exit             : Exit the chat session
         - /edit             : Open editor (Vim/Nano) to write a multi-line prompt
         - /system [text]    : Update system prompt (leave blank to open editor)
-        - /persona [name]   : Load a preset system prompt (type /persona to list all)
+        - /persona [name]   : Load a preset system prompt (leave blank to list all)
         - /save [file]      : Save chat to JSON (default: chat_history.json)
         - /load [file]      : Load chat from JSON (default: chat_history.json)
 
@@ -1223,7 +1223,7 @@ def chat_with_model(client, running_only=False):
                                     f"\n<<< Model ({model_name}) (Loaded):\n{content}"
                                 )
                             else:
-                                print(f"\n {rofe} (Loaded):\n{content}")
+                                print(f"\n {role} (Loaded):\n{content}")
                     else:
                         print(
                             f"\033[91m[ERROR] File {filename} does not exist.\033[0m"
@@ -1449,8 +1449,8 @@ def config_menu(client):
                 except ValueError:
                     pass
         elif choice == "6":
+            val = input(f"Enter temperature [{client.temperature}]: ")
             if val:
-                val = input(f"Enter temperature [{client.temperature}]: ")
                 try:
                     client.temperature = float(val)
                 except ValueError:
