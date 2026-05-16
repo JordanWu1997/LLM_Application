@@ -28,6 +28,8 @@ import pyperclip
 import requests
 from langdetect import DetectorFactory, detect
 
+from ollama_utils import check_args_connections
+
 # Consistent language detection
 DetectorFactory.seed = 0
 
@@ -218,8 +220,9 @@ def display_grid_menu(label, lang_data):
 def get_ollama_response(text,
                         src,
                         tgt,
-                        url,
+                        ollama_url="http://localhost:11434",
                         model="translategemma:4b",
+                        ctx_window=4096,
                         stream=True,
                         verbose=False):
     prompt = (
@@ -231,6 +234,7 @@ def get_ollama_response(text,
         "prompt": prompt,
         "stream": stream,
         "options": {
+            "num_ctx": ctx_window,
             "temperature": 0.2
         }
     }
@@ -242,7 +246,7 @@ def get_ollama_response(text,
         spinner_thread.start()
 
     try:
-        response = requests.post(f"{url}/api/generate",
+        response = requests.post(f"{ollama_url}/api/generate",
                                  json=payload,
                                  stream=stream)
         response.raise_for_status()
@@ -311,18 +315,40 @@ def main():
                         "--verbose",
                         action="store_true",
                         help="Show spinner and stats")
-    parser.add_argument("--host", default="localhost")
-    parser.add_argument("--port", default="11434")
-    parser.add_argument("--model", default="translategemma:4b")
+    parser.add_argument("text", nargs="*", help="Text to translate (CLI mode)")
     parser.add_argument("-i",
                         "--input_file",
                         help="File to translate (CLI mode)")
     parser.add_argument("-o",
                         "--output_file",
                         help="File to translate (CLI mode)")
-    parser.add_argument("text", nargs="*", help="Text to translate (CLI mode)")
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="localhost",
+        help=
+        "The hostname or IP address of the Ollama server (default: localhost)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=11434,
+        help=
+        "The port number the Ollama server is listening on (default: 11434)")
+    parser.add_argument("--model",
+                        default="translategemma:4b",
+                        help="Model name to use (default: translategemma:4b)")
+    parser.add_argument(
+        "--ctx",
+        type=int,
+        default=8192,
+        help=
+        "The size of the context window used to generate the next token (default: 8192)"
+    )
+
     args = parser.parse_args()
-    url = f"http://{args.host}:{args.port}"
+
+    check_args_connections(args)
+    ollama_url = f"http://{args.host}:{args.port}"
     model = args.model
 
     # 1. CLI MODE (Clean Output)
@@ -347,9 +373,10 @@ def main():
             print(
                 get_ollama_response(input_text, (s_code, s_name),
                                     (t_code, t_name),
-                                    url,
+                                    ollama_url=ollama_url,
                                     model=model,
                                     stream=False,
+                                    ctx_window=args.ctx,
                                     verbose=args.verbose))
 
         elif args.input_file:
@@ -389,8 +416,9 @@ def main():
 
                 response = get_ollama_response(line, (s_code, s_name),
                                                (t_code, t_name),
-                                               url,
-                                               model=model,
+                                               ollama_url=ollama_url,
+                                               model=args.model,
+                                               Context_window=args.ctx,
                                                stream=False,
                                                verbose=args.verbose)
                 print(response)
@@ -447,10 +475,12 @@ def main():
                 print(f"\n[{s_name} -> {target_lang[1]}]: ", end="")
                 get_ollama_response(text, (s_code, s_name),
                                     target_lang,
-                                    url,
-                                    model=model,
+                                    ollama_url=ollama_url,
+                                    model=args.model,
+                                    ctx_window=args.ctx,
                                     stream=True,
                                     verbose=True)
+
                 print("\n" + "=" * 40)
 
 

@@ -162,6 +162,10 @@ if __name__ == "__main__":
         help=
         "The size of the context window used to generate the next token (default: 8192)"
     )
+    parser.add_argument("-v",
+                        "--verbose",
+                        action="store_true",
+                        help="Enable verbose mode")
     args = parser.parse_args()
 
     # Check if Ollama connection/model is available
