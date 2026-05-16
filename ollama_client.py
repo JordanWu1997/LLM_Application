@@ -8,6 +8,7 @@ A comprehensive CLI for managing models and interacting with Ollama servers.
 
 import base64
 import json
+import os
 import sys
 import threading
 import time
@@ -214,6 +215,7 @@ class OllamaClient:
         model_name: str,
         prompt: str = '',
         image_paths: List[str] = [],
+        file_paths: List[str] = [],
         messages: List[Dict[str, str]] = [],
         num_ctx: int = -1,
         think: bool = True,
@@ -238,6 +240,17 @@ class OllamaClient:
             with open(image_path, "rb") as img_file:
                 encoded_images.append(
                     base64.b64encode(img_file.read()).decode("utf-8"))
+
+        # Read text files and combine with prompt
+        file_contents, file_text = [], ''
+        for file_path in file_paths:
+            with open(os.path.expanduser(file_path), "r",
+                      encoding='utf-8') as file:
+                file_content = file.read()
+                file_contents.append(file_content)
+        if len(file_contents) != 0:
+            file_text += f"\n\n--- FILE CONTENT ---:\n {'\n'.join(file_contents)}\n--- END OF FILE ---\n"
+            prompt += file_text
 
         # Add the message with image to messages list
         messages.append({
@@ -276,6 +289,7 @@ class OllamaClient:
                  model_name: str,
                  prompt: str = '',
                  image_paths: List[str] = [],
+                 file_paths: List[str] = [],
                  num_ctx: int = -1) -> Union[Dict, Iterator]:
         """
         Generates a response from the specified model using the given prompt and image paths.
@@ -296,6 +310,17 @@ class OllamaClient:
             with open(image_path, "rb") as img_file:
                 encoded_images.append(
                     base64.b64encode(img_file.read()).decode("utf-8"))
+
+        # Read text files and combine with prompt
+        file_contents, file_text = [], ''
+        for file_path in file_paths:
+            with open(os.path.expanduser(file_path), "r",
+                      encoding='utf-8') as file:
+                file_content = file.read()
+                file_contents.append(file_content)
+        if len(file_contents) != 0:
+            file_text += f"\n\n--- FILE CONTENT ---:\n {'\n'.join(file_contents)}\n--- END OF FILE ---\n"
+            prompt += file_text
 
         # Prepare payload
         payload = {
@@ -679,6 +704,7 @@ def generate_completion_with_model(client, running_only=False):
     print(f"\nGenerate completion with {model_name}")
     print("- type /exit to exit the chat session")
     print("- type /image to enter image paths for VLM")
+    print("- type /file to enter text file paths for LLM")
     print("- type /ctx [number] to change context length")
     print(
         "- type /keepalive [options] to change model keep alive time [1m/5m/1h/0/-1]"
@@ -733,6 +759,20 @@ def generate_completion_with_model(client, running_only=False):
                 image_path = input('Enter the image path: ')
                 image_paths.append(image_path)
             # Add prompt for image
+            user_input = input("\n>>> You: \n")
+        elif user_input.lower() == '/file':
+            # Add file
+            file_path = input('\nEnter the file path: ')
+            if file_path != '':
+                file_paths.append(file_path)
+            # Add another file
+            while True:
+                file_path = input('Do you want to add another one? (y/N): ')
+                if file_path != 'y':
+                    break
+                file_path = input('Enter the file path: ')
+                file_paths.append(file_path)
+            # Add prompt for file
             user_input = input("\n>>> You: \n")
         elif user_input.lower().startswith('/ctx'):
             try:
@@ -904,6 +944,7 @@ def chat_with_model(client, running_only=False):
     print(f"\nChat with {model_name}")
     print("- type /exit to exit the chat session")
     print("- type /image to enter image paths for VLM")
+    print("- type /file to enter text file paths for LLM")
     print("- type /ctx [number] to change context length")
     print("- type /think [options] to change think mode [on/off/OTHERS]")
     print(
@@ -927,6 +968,7 @@ def chat_with_model(client, running_only=False):
 
         # Init
         image_paths = []
+        file_paths = []
 
         # User input
         user_input = input("\n>>> You: \n")
@@ -945,6 +987,20 @@ def chat_with_model(client, running_only=False):
                 image_path = input('Enter the image path: ')
                 image_paths.append(image_path)
             # Add prompt for image
+            user_input = input("\n>>> You: \n")
+        elif user_input.lower() == '/file':
+            # Add file
+            file_path = input('\nEnter the file path: ')
+            if file_path != '':
+                file_paths.append(file_path)
+            # Add another file
+            while True:
+                file_path = input('Do you want to add another one? (y/N): ')
+                if file_path != 'y':
+                    break
+                file_path = input('Enter the file path: ')
+                file_paths.append(file_path)
+            # Add prompt for file
             user_input = input("\n>>> You: \n")
         elif user_input.lower().startswith('/ctx'):
             try:
@@ -1028,6 +1084,7 @@ def chat_with_model(client, running_only=False):
                                              prompt=user_input,
                                              messages=messages,
                                              image_paths=image_paths,
+                                             file_paths=file_paths,
                                              think=client.think,
                                              num_ctx=client.num_ctx)
 
