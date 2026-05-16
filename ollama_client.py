@@ -723,6 +723,7 @@ def generate_completion_with_model(client, running_only=False):
     print("- type /exit to exit the chat session")
     print("- type /image to enter image paths for VLM")
     print("- type /file to enter text file paths for LLM")
+    print("- type /edit to enter multi-line text mode")
     print("- type /ctx [number] to change context length")
     print(
         "- type /keepalive [options] to change model keep alive time [1m/5m/1h/0/-1]"
@@ -754,6 +755,7 @@ def generate_completion_with_model(client, running_only=False):
         user_input = input("\n>>> You: \n")
         if user_input.lower() == '/exit':
             break
+
         elif user_input.lower() == '/history':
             print('\n>>> History')
             print(f"\n\033[90m[START OF HiSTORY]\033[0m")
@@ -761,9 +763,11 @@ def generate_completion_with_model(client, running_only=False):
             print(f"\n\033[90m[END OF HISTORY]\033[0m")
             continue
             user_input = input("\n>>> You: \n")
+
         elif user_input.lower() == '/clear':
             print('\n[INFO] History cleared.')
             continue
+
         elif user_input.lower() == '/image':
             # Add image
             image_path = input('\nEnter the image path: ')
@@ -778,6 +782,7 @@ def generate_completion_with_model(client, running_only=False):
                 image_paths.append(image_path)
             # Add prompt for image
             user_input = input("\n>>> You: \n")
+
         elif user_input.lower() == '/file':
             # Add file
             file_path = input('\nEnter the file path: ')
@@ -792,6 +797,23 @@ def generate_completion_with_model(client, running_only=False):
                 file_paths.append(file_path)
             # Add prompt for file
             user_input = input("\n>>> You: \n")
+
+        # Catch the edit command
+        elif user_input.lower() == '/edit':
+            print(
+                f"\033[90m[Opening {os.environ.get('EDITOR', 'vim')}... Save and quit to submit]\033[0m"
+            )
+            user_input = get_input_from_editor()
+            # If the user saved an empty file, just continue
+            if not user_input:
+                print("\033[90m[Empty input, cancelled]\033[0m")
+                continue
+            # Print a snippet so the user knows it was captured
+            print(
+                f"\033[90m[Captured {len(user_input)} characters from editor]\033[0m"
+            )
+            print(f'\n>>> You: \n{user_input}')
+
         elif user_input.lower().startswith('/ctx'):
             try:
                 parts = user_input.split()
@@ -809,10 +831,12 @@ def generate_completion_with_model(client, running_only=False):
                     "[ERROR] Please provide a valid number for context length."
                 )
                 continue
+
         elif user_input.lower() in ['/c', '/cont', '/continue']:
             follow_up_input = input(
                 "\n>>> Your follow-up (or just leave empty): \n")
             user_input = f'{history} {follow_up_input}'
+
         elif user_input.lower().startswith('/keepalive'):
             try:
                 parts = user_input.split()
@@ -963,6 +987,7 @@ def chat_with_model(client, running_only=False):
     print("- type /exit to exit the chat session")
     print("- type /image to enter image paths for VLM")
     print("- type /file to enter text file paths for LLM")
+    print("- type /edit to enter multi-line text mode")
     print("- type /ctx [number] to change context length")
     print("- type /think [options] to change think mode [on/off/OTHERS]")
     print(
@@ -992,6 +1017,7 @@ def chat_with_model(client, running_only=False):
         user_input = input("\n>>> You: \n")
         if user_input.lower() == '/exit':
             break
+
         elif user_input.lower() == '/image':
             # Add image
             image_path = input('\nEnter the image path: ')
@@ -1006,6 +1032,7 @@ def chat_with_model(client, running_only=False):
                 image_paths.append(image_path)
             # Add prompt for image
             user_input = input("\n>>> You: \n")
+
         elif user_input.lower() == '/file':
             # Add file
             file_path = input('\nEnter the file path: ')
@@ -1020,6 +1047,23 @@ def chat_with_model(client, running_only=False):
                 file_paths.append(file_path)
             # Add prompt for file
             user_input = input("\n>>> You: \n")
+
+        # Catch the edit command
+        elif user_input.lower() == '/edit':
+            print(
+                f"\033[90m[Opening {os.environ.get('EDITOR', 'vim')}... Save and quit to submit]\033[0m"
+            )
+            user_input = get_input_from_editor()
+            # If the user saved an empty file, just continue
+            if not user_input:
+                print("\033[90m[Empty input, cancelled]\033[0m")
+                continue
+            # Print a snippet so the user knows it was captured
+            print(
+                f"\033[90m[Captured {len(user_input)} characters from editor]\033[0m"
+            )
+            print(f'\n>>> You: \n{user_input}')
+
         elif user_input.lower().startswith('/ctx'):
             try:
                 parts = user_input.split()
@@ -1037,6 +1081,7 @@ def chat_with_model(client, running_only=False):
                     "[ERROR] Please provide a valid number for context length."
                 )
                 continue
+
         elif user_input.lower().startswith('/think'):
             try:
                 parts = user_input.split()
@@ -1059,6 +1104,7 @@ def chat_with_model(client, running_only=False):
                     "[ERROR] Please provide a valid number for context length."
                 )
                 continue
+
         elif user_input.lower().startswith('/keepalive'):
             try:
                 parts = user_input.split()

@@ -14,14 +14,18 @@ r"""
 # ========================================================================== #
 """
 
-import sys
 import json
+import os
+import subprocess
+import sys
+import tempfile
 
 import requests
 
 
 def get_available_models(base_url):
     """Fetch available models from the Ollama server."""
+
     try:
         # Note: /api/tags (GET) or /api/ps (GET/POST) are common endpoints
         # /api/tags is the standard for listing local models
@@ -132,6 +136,37 @@ def stream_ollama_generate(prompt,
         )
 
     return full_response
+
+
+def get_input_from_editor(initial_text=""):
+    """Opens the user's default terminal editor to capture multi-line input."""
+
+    # Look for the user's preferred editor, default to vim (or nano)
+    editor = os.environ.get('EDITOR', 'vim')
+
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(mode='w+', suffix=".md",
+                                     delete=False) as tf:
+        if initial_text:
+            tf.write(initial_text)
+            tf.flush()
+
+        # Close the file handle temporarily so the editor can safely open it
+        tf_name = tf.name
+
+    try:
+        # Launch the editor and wait for the user to close it
+        subprocess.call([editor, tf_name])
+
+        # Read the contents after the user saves and exits
+        with open(tf_name, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+
+        return content
+    finally:
+        # Always clean up the temporary file afterward
+        if os.path.exists(tf_name):
+            os.remove(tf_name)
 
 
 if __name__ == "__main__":
