@@ -22,6 +22,25 @@ from tokenizers import Tokenizer
 
 from ollama_utils import get_input_from_editor
 
+PERSONAS = {
+    "coder":
+    "You are an expert senior software engineer. Reply only with clean, well-commented, and highly optimized code. Avoid unnecessary conversational filler.",
+    "concise":
+    "You are an AI assistant optimized for speed and efficiency. Answer as briefly as possible. Use bullet points, bold text for emphasis, and skip all pleasantries.",
+    "teacher":
+    "You are a patient and encouraging professor. Explain complex topics using simple terms, relatable analogies, and step-by-step breakdowns.",
+    "critic":
+    "You are a harsh but mathematically logical critic. Analyze the user's prompt, point out logical flaws, edge cases, and areas for improvement. Do not sugarcoat your response.",
+    "writer":
+    "You are a creative author and copywriter. Use highly descriptive, engaging, evocative, and persuasive language.",
+    "json":
+    "You are a data-formatting engine. Output your response STRICTLY as valid JSON. Do not include markdown formatting like ```json, just the raw JSON object.",
+    "pirate":
+    "You are a swashbuckling pirate. Speak strictly in nautical terms, use a pirate accent, and be slightly aggressive. Arrr!",
+    "terminal":
+    "You are a Linux terminal. Output only the raw terminal output that would result from the user's command. Do not explain the commands."
+}
+
 
 class OllamaTokenizer:
     """
@@ -212,6 +231,26 @@ class OllamaClient:
         response.raise_for_status()
         return response.json()
 
+    def pull_model(self, model_name: str):
+        """ Pull a model from the Ollama registry """
+        print(f"Pulling {model_name}... (This may take a while)")
+        response = requests.post(f"{self.base_url}/pull",
+                                 json={"model": model_name},
+                                 stream=True)
+        for line in response.iter_lines():
+            if line:
+                data = json.loads(line)
+                status = data.get("status", "")
+                print(f"\r\033[K{status}", end="")  # \033[K clears the line
+        print("\nDone!")
+
+    def delete_model(self, model_name: str):
+        """ Delete a model from disk """
+        response = requests.delete(f"{self.base_url}/delete",
+                                   json={"model": model_name})
+        response.raise_for_status()
+        print(f"Deleted {model_name}")
+
     def chat(
         self,
         model_name: str,
@@ -282,6 +321,7 @@ class OllamaClient:
     def generate(self,
                  model_name: str,
                  prompt: str = '',
+                 system: str = '',
                  image_paths: List[str] = [],
                  file_paths: List[str] = [],
                  num_ctx: int = -1) -> Union[Dict, Iterator]:
@@ -319,10 +359,18 @@ class OllamaClient:
                 "top_k": self.top_k,
                 "num_ctx": num_ctx if num_ctx > 0 else self.num_ctx,
             },
-            "images": encoded_images,
             "stream": self.stream
         }
 
+        # Inject system prompt into payload if it exists
+        if system:
+            payload["system"] = system
+
+        # Add images if they exist
+        if encoded_images:
+            payload["images"] = encoded_images
+
+        # Send request
         endpoint = "generate"
         if self.stream:
             return self._stream_response(endpoint, payload)
@@ -412,6 +460,12 @@ class OllamaClient:
                          f'{content}\n'
                          f'</document>')
                 context_blocks.append(block)
+
+            except UnicodeDecodeError:
+                print(
+                    f"\033[91m[WARNING] Skipped {file_path}: File is binary or not UTF-8 text.\033[0m"
+                )
+                continue
 
             except Exception as e:
                 # Good practice: handle files that don't exist or have encoding errors
@@ -586,7 +640,7 @@ def list_running_models(client, with_index=True):
                 ctx_num = model.get('context_length', 'N/A')
                 if ctx_num != 'N/A':
                     ctx_num = int(ctx_num)
-                expiires_at = model.get('expires_at', 'N/A')
+                expires_at = model.get('expires_at', 'N/A')
 
                 # Model info
                 model_info = client.show_model_info(model['name'])
@@ -599,11 +653,11 @@ def list_running_models(client, with_index=True):
                 # Print
                 if with_index:
                     print(
-                        f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num}, Expires: {expiires_at})"
+                        f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num}, Expires: {expires_at})"
                     )
                 else:
                     print(
-                        f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num}, Expires: {expiires_at})"
+                        f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num}, Expires: {expires_at})"
                     )
 
         else:
@@ -684,22 +738,129 @@ def unload_model(client):
         print(f"[ERROR] Error unloading model: {e}")
 
 
+def handle_common_commands(user_input: str, client, current_system: str = ""):
+    """
+    Helper function to parse and handle slash commands shared between chat and generate modes.
+    Returns a dictionary dictating the next action for the session loop.
+    """
+
+    parts = user_input.strip().split(maxsplit=1)
+    cmd = parts[0].lower() if parts else ""
+    arg = parts[1] if len(parts) > 1 else ""
+
+    if cmd == '/exit':
+        return {"status": "exit"}
+
+    elif cmd == '/help':
+        return {"status": "help"}
+
+    elif cmd == '/edit':
+        print(
+            f"\033[90m[Opening {os.environ.get('EDITOR', 'vim')}... Save and quit to submit]\033[0m"
+        )
+        edited_text = get_input_from_editor(initial_text=arg)
+        if not edited_text:
+            print("\033[90m[Empty input, cancelled]\033[0m")
+            return {"status": "continue"}
+        print(
+            f"\033[90m[Captured {len(edited_text)} characters from editor]\033[0m"
+        )
+        print(f'>>> You (via Editor):\n{edited_text}')
+        return {"status": "ready", "prompt": edited_text}
+
+    elif cmd == '/system':
+        # If user provides inline text, use it. Otherwise, open the editor pre-filled with current system prompt.
+        if arg:
+            sys_content = arg
+        else:
+            print(
+                f"\033[90m[Opening {os.environ.get('EDITOR', 'vim')} to edit system prompt...]\033[0m"
+            )
+            sys_content = get_input_from_editor(initial_text=current_system)
+
+        if sys_content:
+            print(f">>> System Prompt Updated:\n{sys_content}")
+            return {"status": "update_system", "content": sys_content}
+        else:
+            print("[INFO] System prompt cleared.")
+            return {"status": "update_system", "content": ""}
+
+    elif cmd == '/persona':
+        if arg:
+            persona_name = arg.lower()
+            if persona_name in PERSONAS:
+                sys_content = PERSONAS[persona_name]
+                print(f"\033[92m[INFO] Loaded persona: {persona_name}\033[0m")
+                print(f">>> System Prompt Updated:\n{sys_content}")
+                return {"status": "update_system", "content": sys_content}
+            else:
+                print(
+                    f"\033[91m[ERROR] Persona '{persona_name}' not found.\033[0m"
+                )
+                print(f"Available personas: {', '.join(PERSONAS.keys())}")
+                return {"status": "continue"}
+        else:
+            # If they just type /persona without a name, list the available options
+            print("\n\033[96m=== Available Personas ===\033[0m")
+            for name, desc in PERSONAS.items():
+                # Print the name and a short preview of the prompt
+                preview = desc[:65] + "..." if len(desc) > 65 else desc
+                print(f"- \033[93m{name:<10}\033[0m : {preview}")
+            return {"status": "continue"}
+
+    elif cmd == '/ctx':
+        if arg:
+            client.num_ctx = int(arg) if arg.isdigit() else client.num_ctx
+            print(f"[INFO] Context length updated to {client.num_ctx}")
+        else:
+            print(f"[INFO] Current context length: {client.num_ctx}")
+        return {"status": "continue"}
+
+    elif cmd == '/keepalive':
+        if arg:
+            client.keep_alive = int(arg) if arg.isdigit() else arg
+            print(f"[INFO] Keep-alive updated to {client.keep_alive}")
+        else:
+            print(f"[INFO] Current keep-alive: {client.keep_alive}")
+        return {"status": "continue"}
+
+    elif cmd in ['/image', '/file']:
+        paths = []
+        item_type = "image" if cmd == '/image' else "file"
+
+        # Improved UX: Just press Enter on an empty line to finish adding paths
+        print(
+            f"\n[Enter {item_type} paths. Leave empty and press Enter to finish]"
+        )
+        while True:
+            path = input(f"{item_type.capitalize()} path: ").strip()
+            if not path:
+                break
+            paths.append(path)
+
+        new_prompt = input(f"\n>>> You (Prompt for {item_type}s): \n").strip()
+        return {
+            "status": "ready",
+            "prompt": new_prompt,
+            "image_paths": paths if cmd == '/image' else [],
+            "file_paths": paths if cmd == '/file' else []
+        }
+
+    # If it's not a common command, pass it back so the specific mode can handle it or treat it as text
+    return {
+        "status": "unhandled",
+        "cmd": cmd,
+        "arg": arg,
+        "prompt": user_input
+    }
+
+
 def generate_completion_with_model(client, running_only=False):
-    """
-    Generate a completion using the specified model.
-
-    Args:
-        stream (bool): Whether to stream the response. Defaults to False.
-
-    Returns:
-        None
-    """
     # Get available models
     all_models = list_running_models(client, with_index=running_only)
     if not running_only or all_models == []:
         all_models = list_all_models(client)
 
-    # Convert index to model name
     if len(all_models) == 1:
         model_name = all_models[0]['name']
     else:
@@ -707,170 +868,144 @@ def generate_completion_with_model(client, running_only=False):
         try:
             model_index = int(model_name)
             model_name = all_models[model_index - 1]['name']
-        except ValueError:
-            pass
-        except IndexError:
+        except (ValueError, IndexError):
             pass
         if model_name not in [model['name'] for model in all_models]:
             print(f'[ERROR] Not a valid model name: {model_name}')
             return
 
-    # Initial context settings
-    messages = []
+    history = ""
+    system_prompt = ""
     session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
-    client.ctx_window_used_token = 0
 
-    # Opening
-    print(f"\nGenerate completion with {model_name}")
-    print("- type /exit to exit the chat session")
-    print("- type /image to enter image paths for VLM")
-    print("- type /file to enter text file paths for LLM")
-    print("- type /edit to enter multi-line text mode")
-    print("- type /ctx [number] to change context length")
-    print(
-        "- type /keepalive [options] to change model keep alive time [1m/5m/1h/0/-1]"
-    )
-    print(
-        "- type /continue to continue generation with previous results and follow-up input"
-    )
-    print(
-        '- type /history to shwo full history (user_input and model generation)'
-    )
-    print('- type /clear to clear history')
+    # Define the help menu
+    generate_help_menu = f"""
+        \033[96m=== Generate completion with {model_name} ===\033[0m
 
-    # Load model to generate completion
+        \033[93mCore Commands:\033[0m
+        - /help             : Show this menu
+        - /exit             : Exit the session
+        - /edit             : Open editor (Vim/Nano) to write a multi-line prompt
+        - /system [text]    : Update system prompt (leave blank to open editor)
+        - /persona [name]   : Load a preset system prompt (type /persona to list all)
+
+        \033[93mHistory & Flow:\033[0m
+        - /continue (or /c) : Continue generation (opens editor to review/append)
+        - /history (or /h)  : View and edit full generation history in editor
+        - /clear            : Clear current history completely
+        - /save [file]      : Save history to Markdown (default: generation_history.md)
+
+        \033[93mModel Settings:\033[0m
+        - /ctx [number]     : View or change context length (e.g., /ctx 8192)
+        - /keepalive [time] : View or change model keep-alive time (e.g., 30m)
+
+        \033[93mAttachments:\033[0m
+        - /image            : Load image paths for Vision Models
+        - /file             : Load text file paths to include in prompt
+        """
+    print(generate_help_menu)  # Print once on startup
+
     start_time = time.time()
     _ = client.load_model(model_name)
-    elapsed_time = time.time() - start_time
-    print(f'\nLoading {model_name} took {elapsed_time:.3f} sec')
+    print(f'\nLoading {model_name} took {time.time() - start_time:.3f} sec')
 
-    # Main loop
-    history = ''
     while True:
-
-        # Init
-        image_paths = []
-        follow_up_input = None
+        image_paths, file_paths = [], []
         client.ctx_window_used_token = 0
 
-        # User input
-        user_input = input("\n>>> You: \n")
-        if user_input.lower() == '/exit':
+        user_input = input("\n>>> You: \n").strip()
+        if not user_input:
+            continue
+
+        # Parse Commands
+        cmd_res = handle_common_commands(user_input, client)
+
+        if cmd_res["status"] == "exit":
             break
 
-        elif user_input.lower() == '/history':
-            print('\n>>> History')
-            print(f"\n\033[90m[START OF HiSTORY]\033[0m")
-            print(history)
-            print(f"\n\033[90m[END OF HISTORY]\033[0m")
-            continue
-            user_input = input("\n>>> You: \n")
-
-        elif user_input.lower() == '/clear':
-            print('\n[INFO] History cleared.')
+        elif cmd_res["status"] == "help":
+            print(generate_help_menu)
             continue
 
-        elif user_input.lower() == '/image':
-            # Add image
-            image_path = input('\nEnter the image path: ')
-            if image_path != '':
-                image_paths.append(image_path)
-            # Add another image
-            while True:
-                image_path = input('Do you want to add another one? (y/N): ')
-                if image_path != 'y':
-                    break
-                image_path = input('Enter the image path: ')
-                image_paths.append(image_path)
-            # Add prompt for image
-            user_input = input("\n>>> You: \n")
+        elif cmd_res["status"] == "update_system":
+            system_prompt = cmd_res["content"]
+            continue
 
-        elif user_input.lower() == '/file':
-            # Add file
-            file_path = input('\nEnter the file path: ')
-            if file_path != '':
-                file_paths.append(file_path)
-            # Add another file
-            while True:
-                file_path = input('Do you want to add another one? (y/N): ')
-                if file_path != 'y':
-                    break
-                file_path = input('Enter the file path: ')
-                file_paths.append(file_path)
-            # Add prompt for file
-            user_input = input("\n>>> You: \n")
+        elif cmd_res["status"] == "continue":
+            continue
 
-        # Catch the edit command
-        elif user_input.lower() == '/edit':
-            print(
-                f"\033[90m[Opening {os.environ.get('EDITOR', 'vim')}... Save and quit to submit]\033[0m"
-            )
-            user_input = get_input_from_editor()
-            # If the user saved an empty file, just continue
-            if not user_input:
-                print("\033[90m[Empty input, cancelled]\033[0m")
-                continue
-            # Print a snippet so the user knows it was captured
-            print(
-                f"\033[90m[Captured {len(user_input)} characters from editor]\033[0m"
-            )
-            print(f'\n>>> You: \n{user_input}')
+        elif cmd_res["status"] == "ready":
+            user_input = cmd_res["prompt"]
+            image_paths = cmd_res.get("image_paths", [])
+            file_paths = cmd_res.get("file_paths", [])
 
-        elif user_input.lower().startswith('/ctx'):
-            try:
-                parts = user_input.split()
-                if len(parts) > 1:
-                    new_num_ctx = int(parts[1])
-                    client.num_ctx = new_num_ctx
-                    print(
-                        f"[INFO] Context length updated to {client.num_ctx} for next message."
-                    )
-                else:
-                    print(f"[INFO] Current context length: {client.num_ctx}")
-                continue  # Return to start of loop for follonw prompt
-            except ValueError:
+        elif cmd_res["status"] == "unhandled":
+            cmd, arg = cmd_res["cmd"], cmd_res["arg"]
+
+            if cmd in ['/history', '/h']:
                 print(
-                    "[ERROR] Please provide a valid number for context length."
+                    f"\033[90m[Opening {os.environ.get('EDITOR', 'vim')} to view/edit history...]\033[0m"
                 )
-                continue
+                edited_history = get_input_from_editor(initial_text=history)
 
-        elif user_input.lower() in ['/c', '/cont', '/continue']:
-            follow_up_input = input(
-                "\n>>> Your follow-up (or just leave empty): \n")
-            user_input = f'{history} {follow_up_input}'
-
-        elif user_input.lower().startswith('/keepalive'):
-            try:
-                parts = user_input.split()
-                if len(parts) > 1:
-                    try:
-                        client.keep_alive = int(parts[1])
-                    except ValueError:
-                        client.keep_alive = parts[1]
-                    print(f"[INFO] Keep-alive updated to {client.keep_alive}")
+                # Update history if the user saved changes
+                if edited_history != history:
+                    history = edited_history
+                    print(f">>> History Updated:\n{history}")
                 else:
-                    print(f"[INFO] Current keep-alive: {client.keep_alive}")
-                continue
-            except Exception as e:
-                print(f"[ERROR] {e}")
+                    print("\033[90m[History unchanged]\033[0m")
                 continue
 
-        # Track full response and performance data
+            elif cmd == '/clear':
+                history = ""
+                print('\n[INFO] History cleared.')
+                continue
+
+            elif cmd in ['/c', '/cont', '/continue']:
+                print(
+                    f"\033[90m[Opening {os.environ.get('EDITOR', 'vim')} to continue generation...]\033[0m"
+                )
+
+                # Pre-fill the editor with the current history, plus a couple of newlines
+                prefill = f"{history}\n\n" if history else ""
+                edited_text = get_input_from_editor(initial_text=prefill)
+
+                if not edited_text:
+                    print("\033[90m[Empty input, cancelled]\033[0m")
+                    continue
+
+                print(f">>> You (Continued):\n{edited_text}")
+                user_input = edited_text
+
+            elif cmd == '/save':
+                filename = arg if arg else "generation_history.md"
+                try:
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        f.write(history)
+                    print(
+                        f"\033[92m[INFO] Generation saved successfully to {filename}\033[0m"
+                    )
+                except Exception as e:
+                    print(
+                        f"\033[91m[ERROR] Could not save history: {e}\033[0m")
+                continue
+
+            else:
+                user_input = cmd_res["prompt"]
+
+        if not user_input and not image_paths and not file_paths:
+            continue
+
         print(f"\n<<< Model ({model_name}): ")
-
-        # Track full response and performance data
         start_time = time.time()
         full_response, token_count = "", 0
+        first_token_time, last_token_time = None, None
+        first_token_latency, tps = None, None
 
-        # Spinner for loading animation
         stop_spinner = threading.Event()
         spinner_thread = threading.Thread(target=client._spinner_task,
                                           args=(stop_spinner, ))
         spinner_thread.start()
-
-        # Init
-        first_token_time, last_token_time = None, None
-        first_token_latency, tps = None, None
 
         try:
             # Send request to server
@@ -948,22 +1083,12 @@ def generate_completion_with_model(client, running_only=False):
 
 
 def chat_with_model(client, running_only=False):
-    """
-    Chat with a specified model using the provided API.
-
-    Parameters:
-        stream (bool): If True, enables streaming for typing effect. Defaults to False.
-
-    Returns:
-        None
-    """
 
     # Get available models
     all_models = list_running_models(client, with_index=running_only)
     if not running_only or all_models == []:
         all_models = list_all_models(client)
 
-    # Convert index to model name
     if len(all_models) == 1:
         model_name = all_models[0]['name']
     else:
@@ -971,178 +1096,168 @@ def chat_with_model(client, running_only=False):
         try:
             model_index = int(model_name)
             model_name = all_models[model_index - 1]['name']
-        except ValueError:
-            pass
-        except IndexError:
+        except (ValueError, IndexError):
             pass
         if model_name not in [model['name'] for model in all_models]:
             print(f'[ERROR] Not a valid model name: {model_name}')
             return
 
-    # Initial context settings
     messages = []
     session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
-    client.ctx_window_used_token = 0
 
-    # Opening
-    print(f"\nChat with {model_name}")
-    print("- type /exit to exit the chat session")
-    print("- type /image to enter image paths for VLM")
-    print("- type /file to enter text file paths for LLM")
-    print("- type /edit to enter multi-line text mode")
-    print("- type /ctx [number] to change context length")
-    print("- type /think [options] to change think mode [on/off/OTHERS]")
-    print(
-        "- type /keepalive [options] to change model keep alive time [1m/5m/1h/0/-1]"
-    )
+    # Define the help menu
+    chat_help_menu = f"""
+        \033[96m=== Chat with {model_name} ===\033[0m
 
-    # Load model to chat with
+        \033[93mCore Commands:\033[0m
+        - /help             : Show this menu
+        - /exit             : Exit the chat session
+        - /edit             : Open editor (Vim/Nano) to write a multi-line prompt
+        - /system [text]    : Update system prompt (leave blank to open editor)
+        - /persona [name]   : Load a preset system prompt (type /persona to list all)
+        - /save [file]      : Save chat to JSON (default: chat_history.json)
+        - /load [file]      : Load chat from JSON (default: chat_history.json)
+
+        \033[93mModel Settings:\033[0m
+        - /think [on|off]   : Toggle reasoning/thinking mode (for supported models)
+        - /ctx [number]     : View or change context length (e.g., /ctx 8192)
+        - /keepalive [time] : View or change model keep-alive time (e.g., 30m)
+
+        \033[93mAttachments:\033[0m
+        - /image            : Load image paths for Vision Models
+        - /file             : Load text file paths to include in prompt
+        """
+    print(chat_help_menu)  # Print once on startup
+
     start_time = time.time()
     _ = client.load_model(model_name)
-    elapsed_time = time.time() - start_time
-    print(f'\nLoading {model_name} took {elapsed_time:.3f} sec')
+    print(f'\nLoading {model_name} took {time.time() - start_time:.3f} sec')
 
-    # Load tokenizer
     start_time = time.time()
     tok = OllamaTokenizer(model_name)
-    elapsed_time = time.time() - start_time
-    print(f'Loading {tok.model_family} tokenizer took {elapsed_time:.3f} sec')
+    print(
+        f'Loading {tok.model_family} tokenizer took {time.time() - start_time:.3f} sec'
+    )
 
-    # Main loop
     while True:
+        image_paths, file_paths = [], []
+        client.ctx_window_used_token = 0
 
-        # Init
-        image_paths = []
-        file_paths = []
+        user_input = input("\n>>> You: \n").strip()
+        if not user_input:
+            continue
 
-        # User input
-        user_input = input("\n>>> You: \n")
-        if user_input.lower() == '/exit':
+        # Extract current system prompt from messages array
+        current_sys = messages[0]["content"] if messages and messages[0].get(
+            "role") == "system" else ""
+
+        # Pass it to the handler
+        cmd_res = handle_common_commands(user_input,
+                                         client,
+                                         current_system=current_sys)
+
+        if cmd_res["status"] == "exit":
             break
 
-        elif user_input.lower() == '/image':
-            # Add image
-            image_path = input('\nEnter the image path: ')
-            if image_path != '':
-                image_paths.append(image_path)
-            # Add another image
-            while True:
-                image_path = input('Do you want to add another one? (y/N): ')
-                if image_path != 'y':
-                    break
-                image_path = input('Enter the image path: ')
-                image_paths.append(image_path)
-            # Add prompt for image
-            user_input = input("\n>>> You: \n")
+        elif cmd_res["status"] == "help":
+            print(chat_help_menu)
+            continue
 
-        elif user_input.lower() == '/file':
-            # Add file
-            file_path = input('\nEnter the file path: ')
-            if file_path != '':
-                file_paths.append(file_path)
-            # Add another file
-            while True:
-                file_path = input('Do you want to add another one? (y/N): ')
-                if file_path != 'y':
-                    break
-                file_path = input('Enter the file path: ')
-                file_paths.append(file_path)
-            # Add prompt for file
-            user_input = input("\n>>> You: \n")
+        elif cmd_res["status"] == "update_system":
+            sys_content = cmd_res["content"]
+            # Manage system prompt at index 0 of messages array
+            if messages and messages[0].get("role") == "system":
+                if sys_content: messages[0]["content"] = sys_content
+                else: messages.pop(0)  # Clear if empty
+            elif sys_content:
+                messages.insert(0, {"role": "system", "content": sys_content})
+            continue
 
-        # Catch the edit command
-        elif user_input.lower() == '/edit':
-            print(
-                f"\033[90m[Opening {os.environ.get('EDITOR', 'vim')}... Save and quit to submit]\033[0m"
-            )
-            user_input = get_input_from_editor()
-            # If the user saved an empty file, just continue
-            if not user_input:
-                print("\033[90m[Empty input, cancelled]\033[0m")
+        elif cmd_res["status"] == "continue":
+            continue
+
+        elif cmd_res["status"] == "ready":
+            user_input = cmd_res["prompt"]
+            image_paths = cmd_res.get("image_paths", [])
+            file_paths = cmd_res.get("file_paths", [])
+
+        elif cmd_res["status"] == "unhandled":
+            cmd, arg = cmd_res["cmd"], cmd_res["arg"]
+            # Handle Chat-Specific commands
+            if cmd == '/think':
+                if arg.lower() in ['on', 'true']: client.think = True
+                elif arg.lower() in ['off', 'false']: client.think = False
+                else: client.think = arg
+                print(f"[INFO] Think mode updated to {client.think}")
                 continue
-            # Print a snippet so the user knows it was captured
-            print(
-                f"\033[90m[Captured {len(user_input)} characters from editor]\033[0m"
-            )
-            print(f'\n>>> You: \n{user_input}')
 
-        elif user_input.lower().startswith('/ctx'):
-            try:
-                parts = user_input.split()
-                if len(parts) > 1:
-                    new_num_ctx = int(parts[1])
-                    client.num_ctx = new_num_ctx
+            elif cmd == '/save':
+                filename = arg if arg else "chat_history.json"
+                try:
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        json.dump(messages, f, indent=2, ensure_ascii=False)
                     print(
-                        f"[INFO] Context length updated to {client.num_ctx} for next message."
+                        f"\033[92m[INFO] Chat saved successfully to {filename}\033[0m"
                     )
-                else:
-                    print(f"[INFO] Current context length: {client.num_ctx}")
-                continue  # Return to start of loop for next prompt
-            except ValueError:
-                print(
-                    "[ERROR] Please provide a valid number for context length."
-                )
+                except Exception as e:
+                    print(f"\033[91m[ERROR] Could not save chat: {e}\033[0m")
                 continue
 
-        elif user_input.lower().startswith('/think'):
-            try:
-                parts = user_input.split()
-                if len(parts) > 1:
-                    option = parts[1]
-                    if option.lower() == 'on':
-                        client.think = True
-                    elif option.lower() == 'off':
-                        client.think = False
+            elif cmd == '/load':
+                filename = arg if arg else "chat_history.json"
+                try:
+                    if os.path.exists(filename):
+                        with open(filename, 'r', encoding='utf-8') as f:
+                            messages = json.load(f)
+                        print(
+                            f"\033[92m[INFO] Chat loaded successfully from {filename} ({len(messages)} messages)\033[0m"
+                        )
+                        # Show the loaded message
+                        for message in messages:
+                            role = message['role']
+                            content = message['content']
+                            if role == "user":
+                                print(f'\n>>> You (Loaded):\n{content}')
+                            elif role == 'assistant':
+                                print(
+                                    f"\n<<< Model ({model_name}) (Loaded):\n{content}"
+                                )
+                            else:
+                                print(f"\n {rofe} (Loaded):\n{content}")
                     else:
-                        client.think = option
-                    print(
-                        f"[INFO] Think mode updated to {client.think} for next message."
-                    )
-                else:
-                    print(f"[INFO] Current think mode: {client.think}")
-                continue  # Return to start of loop for next prompt
-            except ValueError:
-                print(
-                    "[ERROR] Please provide a valid number for context length."
-                )
+                        print(
+                            f"\033[91m[ERROR] File {filename} does not exist.\033[0m"
+                        )
+                except Exception as e:
+                    print(f"\033[91m[ERROR] Could not load chat: {e}\033[0m")
                 continue
 
-        elif user_input.lower().startswith('/keepalive'):
-            try:
-                parts = user_input.split()
-                if len(parts) > 1:
-                    try:
-                        client.keep_alive = int(parts[1])
-                    except ValueError:
-                        client.keep_alive = parts[1]
-                    print(f"[INFO] Keep-alive updated to {client.keep_alive}")
-                else:
-                    print(f"[INFO] Current keep-alive: {client.keep_alive}")
-                continue
-            except Exception as e:
-                print(f"[ERROR] {e}")
-                continue
+            else:
+                user_input = cmd_res["prompt"]  # Normal text
 
+        # Failsafe: if input is empty after command processing, skip
+        if not user_input and not image_paths and not file_paths:
+            continue
+
+        # --- 2. API Call & Rendering ---
         print(f"\n<<< Model ({model_name}): ")
 
         # Track full response and performance data
         start_time = time.time()
         full_response, token_count = "", 0
         thinking_response, content_response = "", ""
-
-        # Spinner for loading animation
-        stop_spinner = threading.Event()
-        spinner_thread = threading.Thread(target=client._spinner_task,
-                                          args=(stop_spinner, ))
-        spinner_thread.start()
-
-        # Init
         first_token_time, last_token_time = None, None
         first_token_latency, tps = None, None
 
         # Tracking states for formatting
         currently_thinking = False
         content_started = False
+
+        # Spinner for loading animation
+        stop_spinner = threading.Event()
+        spinner_thread = threading.Thread(target=client._spinner_task,
+                                          args=(stop_spinner, ))
+        spinner_thread.start()
 
         try:
             # Send request to server
