@@ -29,12 +29,13 @@
 - [ ] Shell assistant
 - [ ] Note/Diary organizer
 
-### Video
+### Vision
 
 - [X] Video narrator
 - [X] OCR w/ VLM w/ `glm-ocr`
 - [X] Object detection integrated VLM classification
   - Check my [CV_Application](https://github.com/JordanWu1997/CV_Application) Repo
+- [ ] Media tagger
 
 ## RAG List
 

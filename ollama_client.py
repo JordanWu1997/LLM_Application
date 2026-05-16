@@ -242,15 +242,7 @@ class OllamaClient:
                     base64.b64encode(img_file.read()).decode("utf-8"))
 
         # Read text files and combine with prompt
-        file_contents, file_text = [], ''
-        for file_path in file_paths:
-            with open(os.path.expanduser(file_path), "r",
-                      encoding='utf-8') as file:
-                file_content = file.read()
-                file_contents.append(file_content)
-        if len(file_contents) != 0:
-            file_text += f"\n\n--- FILE CONTENT ---:\n {'\n'.join(file_contents)}\n--- END OF FILE ---\n"
-            prompt += file_text
+        prompt = self._append_files_to_prompt(prompt, file_paths)
 
         # Add the message with image to messages list
         messages.append({
@@ -312,15 +304,7 @@ class OllamaClient:
                     base64.b64encode(img_file.read()).decode("utf-8"))
 
         # Read text files and combine with prompt
-        file_contents, file_text = [], ''
-        for file_path in file_paths:
-            with open(os.path.expanduser(file_path), "r",
-                      encoding='utf-8') as file:
-                file_content = file.read()
-                file_contents.append(file_content)
-        if len(file_contents) != 0:
-            file_text += f"\n\n--- FILE CONTENT ---:\n {'\n'.join(file_contents)}\n--- END OF FILE ---\n"
-            prompt += file_text
+        prompt = self._append_files_to_prompt(prompt, file_paths)
 
         # Prepare payload
         payload = {
@@ -405,6 +389,40 @@ class OllamaClient:
         print(
             f"  - Context Window: {session_stats['num_ctx']} (+{window_usage:.1%} Usage, {ctx_window_usage:.1%} Used in total)"
         )
+
+    @staticmethod
+    def _append_files_to_prompt(prompt, file_paths):
+        # If no files, return the original prompt
+        if not file_paths:
+            return prompt
+
+        context_blocks = []
+
+        # Read files and format them in a single pass
+        for index, file_path in enumerate(file_paths, start=1):
+            expanded_path = os.path.expanduser(file_path)
+            try:
+                with open(expanded_path, "r", encoding='utf-8') as file:
+                    content = file.read()
+
+                # Use XML tags for clear LLM parsing
+                block = (f'<document index="{index}" path="{file_path}">\n'
+                         f'{content}\n'
+                         f'</document>')
+                context_blocks.append(block)
+
+            except Exception as e:
+                # Good practice: handle files that don't exist or have encoding errors
+                print(f"Warning: Skipped file {file_path} due to error: {e}")
+
+        # Combine all blocks and append to the prompt
+        if context_blocks:
+            all_documents = "\n\n".join(context_blocks)
+
+            # Structure: Base Prompt -> Context Wrapper -> Documents
+            prompt += f"\n\n<context>\n{all_documents}\n</context>"
+
+        return prompt
 
     @staticmethod
     def _spinner_task(stop_event):
