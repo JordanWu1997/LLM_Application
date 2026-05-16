@@ -15,6 +15,7 @@ r"""
 """
 
 import sys
+import json
 
 import requests
 
@@ -81,6 +82,56 @@ def check_args_connections(args):
     print()
 
     return args
+
+
+def stream_ollama_generate(prompt,
+                           ollama_url="http://localhost:11434",
+                           model="gemma3:12b",
+                           ctx_window=4096,
+                           verbose=False):
+
+    # Payload
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": True,
+        "options": {
+            "num_ctx": ctx_window,
+            "temperature": 0
+        }
+    }
+
+    full_response = ""
+    stats = {}
+    with requests.post(f"{ollama_url}/api/generate", json=payload,
+                       stream=True) as response:
+        for line in response.iter_lines():
+            if line:
+                chunk = json.loads(line)
+                if not chunk.get("done"):
+                    content = chunk.get("response", "")
+                    full_response += content
+                    if verbose:
+                        print(content, end="", flush=True)
+                else:
+                    stats = chunk
+
+    # Performance Reporting
+    p_tokens = stats.get('prompt_eval_count', 0)
+    o_tokens = stats.get('eval_count', 0)
+    duration = stats.get('eval_duration', 1) / 1e9
+    if verbose:
+        print(
+            f"\n--- Stats: {p_tokens} token-in / {o_tokens} token-out | {o_tokens/duration:.1f} t/s ---"
+        )
+
+    # Prompt truncated alert
+    if p_tokens >= ctx_window:
+        print(
+            f"\n⚠️  CRITICAL: Prompt truncated! ({p_tokens}/{ctx_window} tokens)"
+        )
+
+    return full_response
 
 
 if __name__ == "__main__":

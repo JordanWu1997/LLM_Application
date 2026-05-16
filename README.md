@@ -4,12 +4,13 @@
 
 ## App List
 
-- [ ] Ollama client
+- [X] Ollama client
   - [X] Model Management
   - [X] Chat/Generation
     - [X] w/ Texts
     - [X] w/ Images
     - [X] w/ Files (txt, csv, etc.)
+- [ ] Voice assistant
   - [ ] STT Input
   - [ ] TTS Output
     - [ ] Integrate w/ `espeak` or TTS tools
@@ -23,10 +24,11 @@
 - [X] Translate bot w/ `translategemma`
   - [X] Auto detect input language w/ langdetect
 - [X] Code reviewer
-  - Here I just integrate ollama models into my vim dev environment with [vim-ai](https://github.com/madox2/vim-ai) vim-plug
+  - Here I just integrate ollama models into my dev workflow with [vim-ai](https://github.com/madox2/vim-ai)
     - My [Vim-Tmux workflow](https://github.com/JordanWu1997/Vim_Tmux_Config)
+- [X] Shell assistant
+  - [X] Error fixer
 - [ ] SQL assistant
-- [ ] Shell assistant
 - [ ] Note/Diary organizer
 
 ### Vision
@@ -44,6 +46,7 @@
 ## Agent List
 
 - [ ] OpenClaw
+  - Personal assistant
 - [ ] Agentic Coding
   - [ ] Planer
   - [ ] Code builder
