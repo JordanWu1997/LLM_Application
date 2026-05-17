@@ -131,9 +131,17 @@ class OllamaClient:
         self.stream = stream
         self.keep_alive = keep_alive
         self.ctx_window_used_token = 0
+        self.stdout_lock = threading.Lock()
+        self._tokenizer_cache: Dict[str, OllamaTokenizer] = {}
 
     def update_base_url(self):
         self.base_url = f"http://{self.host}:{self.port}/api"
+
+    def get_tokenizer(self, model_name: str) -> OllamaTokenizer:
+        """Returns a cached tokenizer or creates a new one."""
+        if model_name not in self._tokenizer_cache:
+            self._tokenizer_cache[model_name] = OllamaTokenizer(model_name)
+        return self._tokenizer_cache[model_name]
 
     def list_models(self) -> List[Dict]:
         """
@@ -196,7 +204,8 @@ class OllamaClient:
         try:
             stop_spinner = threading.Event()
             spinner_thread = threading.Thread(target=self._spinner_task,
-                                              args=(stop_spinner, ))
+                                              args=(stop_spinner,
+                                                    self.stdout_lock))
             spinner_thread.start()
             response = requests.post(f"{self.base_url}/generate",
                                      json={
@@ -466,6 +475,9 @@ class OllamaClient:
                 )
                 continue
 
+            except PermissionError:
+                print(f"\033[91m[ERROR] Permission denied: {file_path}\033[0m")
+
             except Exception as e:
                 # Good practice: handle files that don't exist or have encoding errors
                 print(f"Warning: Skipped file {file_path} due to error: {e}")
@@ -480,7 +492,7 @@ class OllamaClient:
         return prompt
 
     @staticmethod
-    def _spinner_task(stop_event):
+    def _spinner_task(stop_event, lock: threading.Lock):
         """
         A task that displays a spinning animation using the spinner characters '\\', '|', '/'.
 
@@ -491,13 +503,16 @@ class OllamaClient:
         spinner = ['\\', '|', '/']
         i = 0
         while not stop_event.is_set():
-            sys.stdout.write(f'\r{spinner[i % len(spinner)]}')
-            sys.stdout.flush()
+            with lock:
+                sys.stdout.write(f'\r{spinner[i % len(spinner)]}')
+                sys.stdout.flush()
             time.sleep(0.1)
             i += 1
+
         # sys.stdout.write('\rDone')
-        sys.stdout.write('\r' + ' ' * 10 + '\r')
-        sys.stdout.flush()
+        with lock:
+            sys.stdout.write('\r' + ' ' * 10 + '\r')
+            sys.stdout.flush()
 
     @staticmethod
     def _calculate_tokens_per_second(response: Dict) -> Optional[float]:
@@ -532,7 +547,7 @@ class OllamaClient:
             return None
 
     @staticmethod
-    def _print_typing_effect(text):
+    def _print_typing_effect(text, lock: threading.Lock):
         """
         Print text with a typing effect.
 
@@ -540,8 +555,10 @@ class OllamaClient:
             text: Text to print
         """
         for char in text:
-            sys.stdout.write(char)
-            sys.stdout.flush()
+            with lock:
+                sys.stdout.write(char)
+                sys.stdout.flush()
+            time.sleep(0.005)
 
 
 def list_all_models(client, with_index=True, with_info=True):
@@ -1003,7 +1020,8 @@ def generate_completion_with_model(client, running_only=False):
 
         stop_spinner = threading.Event()
         spinner_thread = threading.Thread(target=client._spinner_task,
-                                          args=(stop_spinner, ))
+                                          args=(stop_spinner,
+                                                client.stdout_lock))
         spinner_thread.start()
 
         try:
@@ -1030,7 +1048,8 @@ def generate_completion_with_model(client, running_only=False):
                         # Record time of latest token
                         last_token_time = time.time()
                         # Display with typing effect
-                        client._print_typing_effect(content)
+                        client._print_typing_effect(content,
+                                                    client.stdout_lock)
                         full_response += content
 
                     # Track token info for TPS calculation
@@ -1145,7 +1164,7 @@ def chat_with_model(client, running_only=False):
     print(f'\nLoading {model_name} took {time.time() - start_time:.3f} sec')
 
     start_time = time.time()
-    tok = OllamaTokenizer(model_name)
+    tok = client.get_tokenizer(model_name)
     print(
         f'Loading {tok.model_family} tokenizer took {time.time() - start_time:.3f} sec'
     )
@@ -1259,6 +1278,7 @@ def chat_with_model(client, running_only=False):
         thinking_response, content_response = "", ""
         first_token_time, last_token_time = None, None
         first_token_latency, tps = None, None
+        is_generating = False
 
         # Tracking states for formatting
         currently_thinking = False
@@ -1267,7 +1287,8 @@ def chat_with_model(client, running_only=False):
         # Spinner for loading animation
         stop_spinner = threading.Event()
         spinner_thread = threading.Thread(target=client._spinner_task,
-                                          args=(stop_spinner, ))
+                                          args=(stop_spinner,
+                                                client.stdout_lock))
         spinner_thread.start()
 
         try:
@@ -1279,6 +1300,7 @@ def chat_with_model(client, running_only=False):
                                              file_paths=file_paths,
                                              think=client.think,
                                              num_ctx=client.num_ctx)
+            is_generating = True
 
             # Get first full token to measure first token time
             first_token_received = False
@@ -1302,7 +1324,8 @@ def chat_with_model(client, running_only=False):
                         # Record time of latest token
                         last_token_time = time.time()
                         # Display with typing effect
-                        client._print_typing_effect(thinking)
+                        client._print_typing_effect(thinking,
+                                                    client.stdout_lock)
                         full_response += thinking
                         thinking_response += thinking
 
@@ -1325,7 +1348,8 @@ def chat_with_model(client, running_only=False):
                         # Record time of latest token
                         last_token_time = time.time()
                         # Display with typing effect
-                        client._print_typing_effect(content)
+                        client._print_typing_effect(content,
+                                                    client.stdout_lock)
                         full_response += content
                         content_response += content
 
@@ -1390,12 +1414,17 @@ def chat_with_model(client, running_only=False):
             client.display_session_stats(session_stats)
 
             # Add assistant response to messages for context
-            #messages.append({"role": "assistant", "content": full_response})
-            # Add assistant response to messages for context (thinking excluded)
-            messages.append({"role": "assistant", "content": content_response})
+            if content_response != "":
+                messages.append({
+                    "role": "assistant",
+                    "content": content_response  # Thinking excluded
+                    #"content": full_response # Thinking included
+                })
 
         except KeyboardInterrupt:
-            del messages[-1]  # Remove user input if interrupted
+            # Remove user input if interrupted during output generation
+            if is_generating:
+                messages.pop()
             stop_spinner.set()  # Stop the spinner thread
             spinner_thread.join()
             print("\n\n[INTERRUPTED] Stopping generation...")
@@ -1606,4 +1635,15 @@ if __name__ == "__main__":
     client.stream = not args.no_stream
 
     # Menu
-    main_menu(client)
+    try:
+        main_menu(client)
+    except KeyboardInterrupt:
+        print("\n\n[TERMINATED] Program closed by user.")
+    except Exception as e:
+        print(f"\n\n[CRITICAL ERROR] {e}")
+    finally:
+        # This runs NO MATTER WHAT
+        # Clears the line and ensures the terminal cursor is visible
+        sys.stdout.write('\r' + ' ' * 80 + '\r')
+        sys.stdout.flush()
+        print("[INFO] Session ended. Terminal cleaned.")
