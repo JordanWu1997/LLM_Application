@@ -20,7 +20,7 @@ import requests
 from huggingface_hub import hf_hub_download
 from tokenizers import Tokenizer
 
-from ollama_utils import get_input_from_editor
+from ollama_utils import get_input_from_editor, print_context_warning
 
 PERSONAS = {
     "coder":
@@ -426,16 +426,15 @@ class OllamaClient:
         print(f"  - Total (Input + Output) Tokens: {total}")
 
         # Window usage (thinking excluded)
+        window_used_token = session_stats['total_input_tokens']
         if session_stats['content_tokens'] is not None:
-            window_usage = \
-                session_stats['content_tokens'] / session_stats['num_ctx']
-            self.ctx_window_used_token += session_stats['content_tokens']
+            window_used_token += session_stats['content_tokens']
         else:
-            window_usage = \
-                session_stats['total_output_tokens'] / session_stats['num_ctx']
-            self.ctx_window_used_token += session_stats['total_output_tokens']
-        ctx_window_usage = \
-            self.ctx_window_used_token / session_stats['num_ctx']
+            window_used_token += session_stats['total_output_tokens']
+        self.ctx_window_used_token += window_used_token
+
+        window_usage = window_used_token / session_stats['num_ctx']
+        ctx_window_usage = self.ctx_window_used_token / session_stats['num_ctx']
         print(
             f"  - Context Window: {session_stats['num_ctx']} (+{window_usage:.1%} Usage, {ctx_window_usage:.1%} Used in total)"
         )
@@ -1040,6 +1039,11 @@ def generate_completion_with_model(client, running_only=False):
 
                     # Capture final statistics from the last chunk
                     if chunk.get("done"):
+                        # Content window warning
+                        prompt_tokens = chunk.get("prompt_eval_count", 0)
+                        print_context_warning(prompt_tokens=prompt_tokens,
+                                              ctx_window=client.num_ctx)
+
                         session_stats["total_input_tokens"] += chunk.get(
                             "prompt_eval_count", 0)
                         session_stats["total_output_tokens"] += chunk.get(
@@ -1053,6 +1057,12 @@ def generate_completion_with_model(client, running_only=False):
 
             else:
                 full_response = response.get("response", "No response")
+
+                # Content window warning
+                prompt_tokens = response.get("prompt_eval_count", 0)
+                print_context_warning(prompt_tokens=prompt_tokens,
+                                      ctx_window=client.num_ctx)
+
                 session_stats["total_input_tokens"] += response.get(
                     "prompt_eval_count", 0)
                 session_stats["total_output_tokens"] += response.get(
@@ -1068,9 +1078,6 @@ def generate_completion_with_model(client, running_only=False):
             # Show stats
             client.display_session_stats(session_stats)
 
-            # Add generated response to history
-            history = f'{user_input} {full_response}'
-
         except KeyboardInterrupt:
             stop_spinner.set()  # Stop the spinner thread
             spinner_thread.join()
@@ -1080,6 +1087,10 @@ def generate_completion_with_model(client, running_only=False):
         # Handle exceptions
         except Exception as e:
             print(f"\n[ERROR] Error during chat: {e}")
+
+        # Add generated response to history
+        else:
+            history = f'{user_input} {full_response}'
 
 
 def chat_with_model(client, running_only=False):
@@ -1329,6 +1340,11 @@ def chat_with_model(client, running_only=False):
                         if currently_thinking:
                             print(f"\n\033[90m[END THOUGHTS]\033[0m\n")
 
+                        # Content window warning
+                        prompt_tokens = chunk.get("prompt_eval_count", 0)
+                        print_context_warning(prompt_tokens=prompt_tokens,
+                                              ctx_window=client.num_ctx)
+
                         session_stats["total_input_tokens"] += chunk.get(
                             "prompt_eval_count", 0)
                         session_stats["total_output_tokens"] += chunk.get(
@@ -1343,6 +1359,12 @@ def chat_with_model(client, running_only=False):
             else:
                 full_response = response.get("message",
                                              {}).get("content", "No response")
+
+                # Content window warning
+                prompt_tokens = response.get("prompt_eval_count", 0)
+                print_context_warning(prompt_tokens=prompt_tokens,
+                                      ctx_window=client.num_ctx)
+
                 session_stats["total_input_tokens"] += response.get(
                     "prompt_eval_count", 0)
                 session_stats["total_output_tokens"] += response.get(
@@ -1373,6 +1395,7 @@ def chat_with_model(client, running_only=False):
             messages.append({"role": "assistant", "content": content_response})
 
         except KeyboardInterrupt:
+            del messages[-1]  # Remove user input if interrupted
             stop_spinner.set()  # Stop the spinner thread
             spinner_thread.join()
             print("\n\n[INTERRUPTED] Stopping generation...")

@@ -128,12 +128,8 @@ def stream_ollama_generate(prompt,
         print(
             f"\n--- Stats: {p_tokens} token-in / {o_tokens} token-out | {o_tokens/duration:.1f} t/s ---"
         )
-
     # Prompt truncated alert
-    if p_tokens >= ctx_window:
-        print(
-            f"\n⚠️  CRITICAL: Prompt truncated! ({p_tokens}/{ctx_window} tokens)"
-        )
+    print_context_warning(prompt_tokens=p_tokens, ctx_window=ctx_window)
 
     return full_response
 
@@ -167,6 +163,29 @@ def get_input_from_editor(initial_text=""):
         # Always clean up the temporary file afterward
         if os.path.exists(tf_name):
             os.remove(tf_name)
+
+
+def print_context_warning(prompt_tokens, ctx_window):
+    """
+    Warn if prompt tokens are approaching or exceeding context window.
+    """
+    if not ctx_window or ctx_window <= 0:
+        return
+
+    usage_ratio = prompt_tokens / ctx_window
+    usage_percent = usage_ratio * 100
+
+    # Hard truncation warning
+    if prompt_tokens >= ctx_window:
+        print(f"\n\033[91m[WARNING] Input may be TRUNCATED "
+              f"({prompt_tokens}/{ctx_window} tokens, "
+              f"{usage_percent:.1f}% used)\033[0m")
+
+    # Near-limit warning
+    elif usage_ratio >= 0.90:
+        print(f"\n\033[93m[WARNING] Context window nearly full "
+              f"({prompt_tokens}/{ctx_window} tokens, "
+              f"{usage_percent:.1f}% used)\033[0m")
 
 
 if __name__ == "__main__":

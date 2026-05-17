@@ -22,7 +22,7 @@ import tempfile
 
 import requests
 
-from ollama_utils import check_args_connections
+from ollama_utils import check_args_connections, print_context_warning
 
 
 def get_git_diff():
@@ -51,8 +51,6 @@ def generate_streaming_commit(diff,
     }
 
     full_message = ""
-    metadata = {}
-
     try:
         # Use stream=True in requests
         response = requests.post(f'{ollama_url}/api/generate',
@@ -73,18 +71,10 @@ def generate_streaming_commit(diff,
 
                 # The last chunk contains the metadata
                 if chunk.get('done'):
-                    metadata = chunk
                     print("\n")
-
-        # Token Truncation Check
-        processed = metadata.get("prompt_eval_count", 0)
-        if processed >= context_window:
-            print(
-                f"\033[93m⚠️  Warning: Input reached {context_window} tokens and was truncated.\033[0m"
-            )
-        else:
-            print(
-                f"\033[90m(Tokens used: {processed}/{context_window})\033[0m")
+                    prompt_tokens = chunk.get("prompt_eval_count", 0)
+                    print_context_warning(prompt_tokens=prompt_tokens,
+                                          ctx_window=context_window)
 
         return full_message.strip()
 

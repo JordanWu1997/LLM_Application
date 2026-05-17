@@ -17,12 +17,11 @@ r"""
 import json
 import os
 import re
-import sys
 
 import requests
 from tqdm import tqdm
 
-from ollama_utils import check_args_connections
+from ollama_utils import check_args_connections, print_context_warning
 
 
 def get_existing_master_tags(filepath):
@@ -94,13 +93,8 @@ def call_ollama_streaming(prompt,
         print(
             f"\n--- {phase_name} Stats: {p_tokens} token-in / {o_tokens} token-out | {o_tokens/duration:.1f} t/s ---"
         )
-
     # Prompt truncated alert
-    if verbose:
-        if p_tokens >= ctx_window:
-            print(
-                f"⚠️  CRITICAL: Prompt truncated! ({p_tokens}/{ctx_window} tokens)"
-            )
+    print_context_warning(prompt_tokens=p_tokens, ctx_window=ctx_window)
 
     return full_response
 
