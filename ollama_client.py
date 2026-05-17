@@ -123,7 +123,8 @@ class OllamaStats():
         if context_window is not None:
             self.context_window = context_window
         self.TTFT = 0
-        self.TPS = 0
+        self.prompt_TPS = 0
+        self.generation_TPS = 0
         self.total_input_token = 0
         self.system_prompt_token = 0
         self.user_prompt_token = 0
@@ -134,7 +135,7 @@ class OllamaStats():
     def update_context_window(self, context_window):
         self.context_window = context_window
 
-    def display_session_stats(self, session_stats):
+    def display(self, session_stats):
         # Stats
         print("\n[Statistics]")
         print(f'- Performance')
@@ -278,7 +279,7 @@ class OllamaClient:
             return {"status": "aborted"}
         finally:
             stop_spinner.set()
-            spinner_thread.join()
+            spinner_thread.join(timeout=1)
 
     def unload_model(self, model_name: str) -> Dict:
         """
@@ -1161,7 +1162,7 @@ def generate_completion_with_model(client, running_only=False):
                             first_token_received = True
                             # Stop the spinner
                             stop_spinner.set()
-                            spinner_thread.join()
+                            spinner_thread.join(timeout=1)
                         # Record time of latest token
                         last_token_time = time.time()
                         # Display with typing effect
@@ -1186,7 +1187,7 @@ def generate_completion_with_model(client, running_only=False):
 
                 # Stop the spinner
                 stop_spinner.set()
-                spinner_thread.join()
+                spinner_thread.join(timeout=1)
 
             # Content window warning
             print_context_warning(
@@ -1208,11 +1209,11 @@ def generate_completion_with_model(client, running_only=False):
                 prompt_token / metadata.get('prompt_eval_duration', -1) * 1e9
             session_stats.generation_TPS = \
                 generation_token / metadata.get('eval_duration', -1) * 1e9
-            session_stats.display_session_stats(client.num_ctx)
+            session_stats.display(client.num_ctx)
 
         except KeyboardInterrupt:
             stop_spinner.set()  # Stop the spinner thread
-            spinner_thread.join()
+            spinner_thread.join(timeout=1)
             print("\n\n[INTERRUPTED] Stopping generation...")
             continue
 
@@ -1431,7 +1432,7 @@ def chat_with_model(client, running_only=False):
                             first_token_received = True
                             # Stop the spinner
                             stop_spinner.set()
-                            spinner_thread.join()
+                            spinner_thread.join(timeout=1)
 
                             # Print Thinking Block Header
                             print(f"\n\033[90m[THINKING]\033[0m")
@@ -1459,7 +1460,7 @@ def chat_with_model(client, running_only=False):
                             first_token_received = True
                             # Stop the spinner
                             stop_spinner.set()
-                            spinner_thread.join()
+                            spinner_thread.join(timeout=1)
 
                         # Record time of latest token
                         last_token_time = time.time()
@@ -1495,7 +1496,7 @@ def chat_with_model(client, running_only=False):
 
                 # Stop the spinner
                 stop_spinner.set()
-                spinner_thread.join()
+                spinner_thread.join(timeout=1)
 
             # Content window warning
             print_context_warning(
@@ -1517,7 +1518,7 @@ def chat_with_model(client, running_only=False):
                 prompt_token / metadata.get('prompt_eval_duration', -1) * 1e9
             session_stats.generation_TPS = \
                 generation_token / metadata.get('eval_duration', -1) * 1e9
-            session_stats.display_session_stats(client.num_ctx)
+            session_stats.display(client.num_ctx)
 
             # Add assistant response to messages for context
             if content_response != "":
@@ -1532,7 +1533,7 @@ def chat_with_model(client, running_only=False):
             if is_generating:
                 messages.pop()
             stop_spinner.set()  # Stop the spinner thread
-            spinner_thread.join()
+            spinner_thread.join(timeout=1)
             print("\n\n[INTERRUPTED] Stopping generation...")
             continue
 
