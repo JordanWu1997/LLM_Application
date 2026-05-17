@@ -105,6 +105,65 @@ class OllamaTokenizer:
         }
 
 
+class OllamaStats():
+
+    def __init__(self, context_window):
+        self.context_window = context_window
+        self.TTFT = 0
+        self.prompt_TPS = 0
+        self.generation_TPS = 0
+        self.total_input_token = 0
+        self.system_prompt_token = 0
+        self.user_prompt_token = 0
+        self.total_output_token = 0
+        self.thinking_token = 0
+        self.content_token = 0
+
+    def reset_stats(self, context_window=None):
+        if context_window is not None:
+            self.context_window = context_window
+        self.TTFT = 0
+        self.TPS = 0
+        self.total_input_token = 0
+        self.system_prompt_token = 0
+        self.user_prompt_token = 0
+        self.total_output_token = 0
+        self.thinking_token = 0
+        self.content_token = 0
+
+    def update_context_window(self, context_window):
+        self.context_window = context_window
+
+    def display_session_stats(self, session_stats):
+        # Stats
+        print("\n[Statistics]")
+        print(f'- Performance')
+        # TTFT
+        print(f"  - First token latency (TTFT): "
+              f"{self.TTFT:.2f} sec")
+        # TPS
+        print(f"  - Prompt prefilling: "
+              f"{self.prompt_TPS:.1f} tokens/sec")
+        print(f"  - Token generation: "
+              f"{self.generation_TPS:.1f} tokens/sec")
+        # Token stats
+        print(f"- Token Usage")
+        print(f"  - Input Tokens: {self.total_input_token}")
+        print(f"    - Estimate System Prompt: {self.system_prompt_token}")
+        print(f"    - Estimate User Prompt: {self.user_prompt_token}")
+        print(f"  - Output Tokens: {self.total_output_token}")
+        print(f"    - Estimate Thinking: {self.thinking_token}")
+        print(f"    - Estimate Content: {self.content_token}")
+        print(f"  - Total (Input + Output) Tokens: "
+              f"{self.total_input_token + self.total_output_token}")
+        print(f"- Context Window Usage")
+        print(
+            f"  - Used: "
+            f"{self.total_input_token + self.total_output_token}/{self.context_window} "
+            f"({(self.total_input_token + self.total_output_token)/self.context_window:.1%})"
+        )
+
+
 class OllamaClient:
     """Client for interacting with Ollama REST API."""
 
@@ -130,7 +189,6 @@ class OllamaClient:
         self.think = think
         self.stream = stream
         self.keep_alive = keep_alive
-        self.ctx_window_used_token = 0
         self.stdout_lock = threading.Lock()
         self._tokenizer_cache: Dict[str, OllamaTokenizer] = {}
 
@@ -270,18 +328,38 @@ class OllamaClient:
         num_ctx: int = -1,
         think: bool = True,
     ) -> tuple[Union[Dict, Iterator], List[Dict[str, str]]]:
-        """
-        Chat with a model.
+        """Sends a chat request to the model, supporting text, images, and file attachments.
+
+        This method processes provided images and text files, appends the new user
+        message to the existing conversation history, and communicates with the
+        model API. It supports both streaming and non-streaming responses.
 
         Args:
-            - model_name (str): Name of the model to chat with
-            - prompt (str): The prompt for the chat.
-            - image_paths (list[str]): List of paths to images to include in the chat.
-            - messages (list[dict]): List of message dictionaries [{"role": "user", "content": "Hello"}, ...].
-            - num_ctx
+            model_name (str): The name of the model to use for the chat session.
+            prompt (str, optional): The initial text prompt. Defaults to empty string.
+            image_paths (List[str], optional): A list of file paths to images.
+                Images are automatically encoded to base64. Defaults to an empty list.
+            file_paths (List[str], optional): A list of file paths to text files.
+                The contents of these files will be appended to the prompt.
+                Defaults to an empty list.
+            messages (List[Dict[str, str]], optional): The existing conversation
+                history. Note: This list is modified in-place to include the
+                new user message. Defaults to an empty list.
+            num_ctx (int, optional): The size of the context window. If -1,
+                the class's default `num_ctx` is used. Defaults to -1.
+            think (bool, optional): Whether to enable the model's reasoning/thinking
+                process (useful for models like DeepSeek-R1). Defaults to True.
 
         Returns:
-            - dict: A dictionary containing the model's reply or a stream iterator
+            tuple[Union[Dict, Iterator], List[Dict[str, str]]]: A tuple containing:
+                - The model's response. This is a dictionary if `self.stream` is
+                  False, or an iterator if `self.stream` is True.
+                - The updated list of messages, including the newly appended
+                  user message with encoded images.
+
+        Side Effects:
+            Modifies the `messages` list passed as an argument by appending
+            the new user role message.
         """
 
         # Read image and encode to base64
@@ -334,17 +412,33 @@ class OllamaClient:
                  image_paths: List[str] = [],
                  file_paths: List[str] = [],
                  num_ctx: int = -1) -> Union[Dict, Iterator]:
-        """
-        Generates a response from the specified model using the given prompt and image paths.
+        """Generates a single completion response from the specified model.
+
+        This method processes text files and images, constructs a payload including
+        system instructions, and sends a request to the generation endpoint.
+        It supports both streaming and non-streaming responses based on the
+        class configuration.
 
         Args:
             model_name (str): The name of the model to use for generation.
-            prompt (str, optional): The prompt text for the generation. Defaults to an empty string.
-            image_paths ([str], optional): A list of file paths to images to be included in the generation. Defaults to an empty list.
-            num_ctx
+            prompt (str, optional): The primary text prompt. Defaults to an empty string.
+            system (str, optional): System-level instructions to guide the model's
+                behavior. Defaults to an empty string.
+            image_paths (List[str], optional): A list of file paths to images.
+                Images are automatically encoded to base64. Defaults to an empty list.
+            file_paths (List[str], optional): A list of file paths to text files.
+                The contents of these files will be appended to the prompt.
+                Defaults to an empty list.
+            num_ctx (int, optional): The size of the context window. If -1,
+                the class's default `num_ctx` is used. Defaults to -1.
 
         Returns:
-            Union[Dict, Itererator]: A dictionary containing the generated response or an iterator if streaming is enabled.
+            Union[Dict, Iterator]: The model's response. Returns a dictionary
+                if `self.stream` is False, or an iterator if `self.stream` is True.
+
+        Raises:
+            requests.exceptions.HTTPError: If the API request returns an error status.
+
         """
 
         # Read image and encode to base64
@@ -410,46 +504,43 @@ class OllamaClient:
                     except json.JSONDecodeError:
                         yield {"error": "Failed to parse streaming response"}
 
-    def display_session_stats(self, session_stats):
-        # Stats
-        print("\n[Statistics]")
-        # TTFT
-        if session_stats['first_token_latency'] is not None:
-            print(
-                f"- First token latency (TTFT): {session_stats['first_token_latency']:.2f} sec"
-            )
-        # TPS
-        if session_stats['tps'] is not None:
-            print(f"- Performance: {session_stats['tps']:.1f} tokens/sec")
-        # Token stats
-        total = session_stats["total_input_tokens"] + session_stats[
-            "total_output_tokens"]
-        print("- Token Usage")
-        print(f"  - Input Tokens: {session_stats['total_input_tokens']}")
-        print(f"  - Output Tokens: {session_stats['total_output_tokens']}")
-        if session_stats['thinking_tokens'] is not None:
-            print(
-                f"    - Estimate Thinking: {session_stats['thinking_tokens']}")
-        if session_stats['content_tokens'] is not None:
-            print(f"    - Estimate Content: {session_stats['content_tokens']}")
-        print(f"  - Total (Input + Output) Tokens: {total}")
-
-        # Window usage (thinking excluded)
-        window_used_token = session_stats['total_input_tokens']
-        if session_stats['content_tokens'] is not None:
-            window_used_token += session_stats['content_tokens']
-        else:
-            window_used_token += session_stats['total_output_tokens']
-        self.ctx_window_used_token += window_used_token
-
-        window_usage = window_used_token / session_stats['num_ctx']
-        ctx_window_usage = self.ctx_window_used_token / session_stats['num_ctx']
-        print(
-            f"  - Context Window: {session_stats['num_ctx']} (+{window_usage:.1%} Usage, {ctx_window_usage:.1%} Used in total)"
-        )
-
     @staticmethod
     def _append_files_to_prompt(prompt, file_paths):
+        """Appends the contents of text files to a prompt using XML-style delimiters.
+
+        This method reads the content of each file in `file_paths`, wraps the content
+        in `<document>` tags with metadata, and encapsulates all documents within
+        a `<context>` block appended to the original prompt. It uses `os.path.expanduser`
+        to support tilde (`~`) paths.
+
+        Args:
+            prompt (str): The original base prompt.
+            file_paths (List[str]): A list of file paths to be appended.
+                Supports absolute paths and paths with '~'.
+
+        Returns:
+            str: The augmented prompt. If no files are provided or all files
+                fail to load, the original prompt is returned.
+
+        Note:
+            The resulting prompt structure follows this pattern:
+            <original_prompt>
+
+            <context>
+            <document index="1" path="path/to/file.txt">
+            [file_content]
+            </document>
+            ...
+            </context>
+            </context>
+
+        Error Handling:
+            - Skips files that are not UTF-8 encoded (binary files).
+            - Skips files where permission is denied.
+            - Skips files that do not exist or encounter other I/O errors.
+            - Prints warnings/errors to the console for skipped files.
+        """
+
         # If no files, return the original prompt
         if not file_paths:
             return prompt
@@ -492,29 +583,6 @@ class OllamaClient:
         return prompt
 
     @staticmethod
-    def _spinner_task(stop_event, lock: threading.Lock):
-        """
-        A task that displays a spinning animation using the spinner characters '\\', '|', '/'.
-
-        Args:
-        stop_event (Event): An event object used to signal the task to stop.
-        """
-
-        spinner = ['\\', '|', '/']
-        i = 0
-        while not stop_event.is_set():
-            with lock:
-                sys.stdout.write(f'\r{spinner[i % len(spinner)]}')
-                sys.stdout.flush()
-            time.sleep(0.1)
-            i += 1
-
-        # sys.stdout.write('\rDone')
-        with lock:
-            sys.stdout.write('\r' + ' ' * 10 + '\r')
-            sys.stdout.flush()
-
-    @staticmethod
     def _calculate_tokens_per_second(response: Dict) -> Optional[float]:
         """
         Calculate tokens per second from the response metadata.
@@ -547,12 +615,56 @@ class OllamaClient:
             return None
 
     @staticmethod
-    def _print_typing_effect(text, lock: threading.Lock):
-        """
-        Print text with a typing effect.
+    def _spinner_task(stop_event, lock: threading.Lock):
+        """A background thread task that displays a visual loading spinner.
+
+        This method runs in a loop, cycling through a set of characters ('\\', '|', '/')
+        to indicate an ongoing process. It is designed to be run in a separate thread.
+        When the `stop_event` is set, the loop terminates and the method cleans up
+        the terminal line to prevent visual artifacts.
 
         Args:
-            text: Text to print
+            stop_event (threading.Event): An event object used to signal the
+                task to stop. The loop continues as long as `is_set()` is False.
+            lock (threading.Lock): A thread lock used to synchronize access to
+                `sys.stdout`. This prevents the spinner from overwriting text
+                being printed by other threads (e.g., the typing effect).
+
+        Note:
+            Upon termination, this method clears the current line in the terminal
+            by overwriting the spinner with spaces.
+        """
+
+        spinner = ['\\', '|', '/']
+        i = 0
+        while not stop_event.is_set():
+            with lock:
+                sys.stdout.write(f'\r{spinner[i % len(spinner)]}')
+                sys.stdout.flush()
+            time.sleep(0.1)
+            i += 1
+
+        # sys.stdout.write('\rDone')
+        with lock:
+            sys.stdout.write('\r' + ' ' * 10 + '\r')
+            sys.stdout.flush()
+
+    @staticmethod
+    def _print_typing_effect(text, lock: threading.Lock):
+        """Prints text to the console with a typewriter-style animation.
+
+        Iterates through the provided string character by character, printing
+        each one with a slight delay to simulate a typing effect.
+
+        Args:
+            text (str): The string of text to be printed to the console.
+            lock (threading.Lock): A thread lock used to synchronize access to
+                `sys.stdout`. This ensures that the typing effect does not
+                interleave with or get corrupted by the `_spinner_task`
+                overwriting the same line.
+
+        Side Effects:
+            Modifies `sys.stdout` and introduces a small delay (0.005s) per character.
         """
         for char in text:
             with lock:
@@ -653,9 +765,9 @@ def list_running_models(client, with_index=True):
                 if size_vram != 'N/A':
                     size_vram = float(size_vram) / 1024 / 1024 / 1024
                     size_vram = f'{size_vram:.2f}'
-                ctx_num = model.get('context_length', 'N/A')
-                if ctx_num != 'N/A':
-                    ctx_num = int(ctx_num)
+                num_ctx = model.get('context_length', 'N/A')
+                if num_ctx != 'N/A':
+                    num_ctx = int(num_ctx)
                 expires_at = model.get('expires_at', 'N/A')
 
                 # Model info
@@ -669,11 +781,11 @@ def list_running_models(client, with_index=True):
                 # Print
                 if with_index:
                     print(
-                        f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num}, Expires: {expires_at})"
+                        f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {num_ctx}, Expires: {expires_at})"
                     )
                 else:
                     print(
-                        f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {ctx_num}, Expires: {expires_at})"
+                        f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {num_ctx}, Expires: {expires_at})"
                     )
 
         else:
@@ -892,7 +1004,7 @@ def generate_completion_with_model(client, running_only=False):
 
     history = ""
     system_prompt = ""
-    session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
+    session_stats = OllamaStats(client.num_ctx)
 
     # Define the help menu
     generate_help_menu = f"""
@@ -921,9 +1033,17 @@ def generate_completion_with_model(client, running_only=False):
         """
     print(generate_help_menu)  # Print once on startup
 
+    # Load model
     start_time = time.time()
     _ = client.load_model(model_name)
     print(f'\nLoading {model_name} took {time.time() - start_time:.3f} sec')
+
+    # Load tokenizer
+    start_time = time.time()
+    tok = client.get_tokenizer(model_name)
+    print(
+        f'Loading {tok.model_family} tokenizer took {time.time() - start_time:.3f} sec'
+    )
 
     while True:
         image_paths, file_paths = [], []
@@ -1013,17 +1133,15 @@ def generate_completion_with_model(client, running_only=False):
             continue
 
         print(f"\n<<< Model ({model_name}): ")
-        start_time = time.time()
-        full_response, token_count = "", 0
-        first_token_time, last_token_time = None, None
-        first_token_latency, tps = None, None
-
         stop_spinner = threading.Event()
         spinner_thread = threading.Thread(target=client._spinner_task,
                                           args=(stop_spinner,
                                                 client.stdout_lock))
         spinner_thread.start()
 
+        start_time = time.time()
+        first_token_time, last_token_time = None, None
+        full_response, first_token_latency = "", None
         try:
             # Send request to server
             response = client.generate(model_name,
@@ -1032,7 +1150,6 @@ def generate_completion_with_model(client, running_only=False):
 
             # Get first full token to measure first token time
             first_token_received = False
-
             if client.stream:
                 # Decode response
                 for chunk in response:
@@ -1052,50 +1169,46 @@ def generate_completion_with_model(client, running_only=False):
                                                     client.stdout_lock)
                         full_response += content
 
-                    # Track token info for TPS calculation
-                    if "eval_count" in chunk:
-                        token_count = chunk["eval_count"]
-
                     # Capture final statistics from the last chunk
                     if chunk.get("done"):
-                        # Content window warning
-                        prompt_tokens = chunk.get("prompt_eval_count", 0)
-                        print_context_warning(prompt_tokens=prompt_tokens,
-                                              ctx_window=client.num_ctx)
+                        metadata = chunk
 
-                        session_stats["total_input_tokens"] += chunk.get(
-                            "prompt_eval_count", 0)
-                        session_stats["total_output_tokens"] += chunk.get(
-                            "eval_count", 0)
-
+                # Calculate TTFT
                 if first_token_time is not None:
                     first_token_latency = first_token_time - start_time
-                    elapsed_time = time.time() - start_time
-                    tps = token_count / elapsed_time
                 print()
 
             else:
+                metadata = response
+                first_token_latency = -1
                 full_response = response.get("response", "No response")
+                print(full_response)
 
-                # Content window warning
-                prompt_tokens = response.get("prompt_eval_count", 0)
-                print_context_warning(prompt_tokens=prompt_tokens,
-                                      ctx_window=client.num_ctx)
+                # Stop the spinner
+                stop_spinner.set()
+                spinner_thread.join()
 
-                session_stats["total_input_tokens"] += response.get(
-                    "prompt_eval_count", 0)
-                session_stats["total_output_tokens"] += response.get(
-                    "eval_count", 0)
+            # Content window warning
+            print_context_warning(
+                prompt_tokens=metadata.get("prompt_eval_count", 0),
+                ctx_window=client.num_ctx,
+            )
 
-            # Update stats
-            session_stats['first_token_latency'] = first_token_latency
-            session_stats['tps'] = tps
-            session_stats['num_ctx'] = client.num_ctx
-            session_stats["thinking_tokens"] = None
-            session_stats["content_tokens"] = None
-
-            # Show stats
-            client.display_session_stats(session_stats)
+            # Stats
+            session_stats.TTFT = first_token_latency
+            prompt_token = metadata.get('prompt_eval_count', 0)
+            generation_token = metadata.get('eval_count', 0)
+            session_stats.total_input_token = prompt_token
+            session_stats.total_output_token = generation_token
+            session_stats.system_prompt_token = tok.count(system_prompt)
+            session_stats.user_prompt_token = tok.count(user_input)
+            session_stats.think_token = 0  # tok.count(thinking_response)
+            session_stats.content_token = 0  #tok.count(content_response)
+            session_stats.prompt_TPS = \
+                prompt_token / metadata.get('prompt_eval_duration', -1) * 1e9
+            session_stats.generation_TPS = \
+                generation_token / metadata.get('eval_duration', -1) * 1e9
+            session_stats.display_session_stats(client.num_ctx)
 
         except KeyboardInterrupt:
             stop_spinner.set()  # Stop the spinner thread
@@ -1132,9 +1245,6 @@ def chat_with_model(client, running_only=False):
             print(f'[ERROR] Not a valid model name: {model_name}')
             return
 
-    messages = []
-    session_stats = {"total_input_tokens": 0, "total_output_tokens": 0}
-
     # Define the help menu
     chat_help_menu = f"""
         \033[96m=== Chat with {model_name} ===\033[0m
@@ -1159,27 +1269,33 @@ def chat_with_model(client, running_only=False):
         """
     print(chat_help_menu)  # Print once on startup
 
+    # Load model
     start_time = time.time()
     _ = client.load_model(model_name)
     print(f'\nLoading {model_name} took {time.time() - start_time:.3f} sec')
 
+    # Load tokenizer
     start_time = time.time()
     tok = client.get_tokenizer(model_name)
     print(
         f'Loading {tok.model_family} tokenizer took {time.time() - start_time:.3f} sec'
     )
 
-    while True:
-        image_paths, file_paths = [], []
-        client.ctx_window_used_token = 0
+    # Init stats
+    session_stats = OllamaStats(client.num_ctx)
 
+    messages = []
+    while True:
+
+        # --- 1. Parse user input ---
+        image_paths, file_paths = [], []
         user_input = input("\n>>> You: \n").strip()
         if not user_input:
             continue
 
         # Extract current system prompt from messages array
-        current_sys = messages[0]["content"] if messages and messages[0].get(
-            "role") == "system" else ""
+        current_sys = messages[0]["content"] \
+            if messages and messages[0].get( "role") == "system" else ""
 
         # Pass it to the handler
         cmd_res = handle_common_commands(user_input,
@@ -1277,7 +1393,7 @@ def chat_with_model(client, running_only=False):
         full_response, token_count = "", 0
         thinking_response, content_response = "", ""
         first_token_time, last_token_time = None, None
-        first_token_latency, tps = None, None
+        first_token_latency = None
         is_generating = False
 
         # Tracking states for formatting
@@ -1359,59 +1475,49 @@ def chat_with_model(client, running_only=False):
 
                     # Capture final statistics from the last chunk
                     if chunk.get("done"):
+                        metadata = chunk
 
                         # Ensure we close thinking block if model finished without content
                         if currently_thinking:
                             print(f"\n\033[90m[END THOUGHTS]\033[0m\n")
 
-                        # Content window warning
-                        prompt_tokens = chunk.get("prompt_eval_count", 0)
-                        print_context_warning(prompt_tokens=prompt_tokens,
-                                              ctx_window=client.num_ctx)
-
-                        session_stats["total_input_tokens"] += chunk.get(
-                            "prompt_eval_count", 0)
-                        session_stats["total_output_tokens"] += chunk.get(
-                            "eval_count", 0)
-
                 if first_token_time is not None:
                     first_token_latency = first_token_time - start_time
-                    elapsed_time = time.time() - start_time
-                    tps = token_count / elapsed_time
                 print()
 
             else:
+                metadata = response
+                first_token_latency = -1
                 full_response = response.get("message",
                                              {}).get("content", "No response")
-
-                # Content window warning
-                prompt_tokens = response.get("prompt_eval_count", 0)
-                print_context_warning(prompt_tokens=prompt_tokens,
-                                      ctx_window=client.num_ctx)
-
-                session_stats["total_input_tokens"] += response.get(
-                    "prompt_eval_count", 0)
-                session_stats["total_output_tokens"] += response.get(
-                    "eval_count", 0)
+                content_response = full_response
+                print(full_response)
 
                 # Stop the spinner
                 stop_spinner.set()
                 spinner_thread.join()
-                tps = client._calculate_tokens_per_second(response)
-                print(full_response)
 
-            # Update stats
-            session_stats['first_token_latency'] = first_token_latency
-            session_stats['tps'] = tps
-            session_stats['num_ctx'] = client.num_ctx
+            # Content window warning
+            print_context_warning(
+                prompt_tokens=metadata.get("prompt_eval_count", 0),
+                ctx_window=client.num_ctx,
+            )
 
-            # Count token and update stats
-            counts = tok.get_stats(thinking_response, content_response)
-            session_stats["thinking_tokens"] = counts["thinking_tokens"]
-            session_stats["content_tokens"] = counts["content_tokens"]
-
-            # Show stats
-            client.display_session_stats(session_stats)
+            # Stats
+            session_stats.TTFT = first_token_latency
+            prompt_token = metadata.get('prompt_eval_count', 0)
+            generation_token = metadata.get('eval_count', 0)
+            session_stats.total_input_token = prompt_token
+            session_stats.total_output_token = generation_token
+            session_stats.system_prompt_token = tok.count(current_sys)
+            session_stats.user_prompt_token = tok.count(user_input)
+            session_stats.think_token = tok.count(thinking_response)
+            session_stats.content_token = tok.count(content_response)
+            session_stats.prompt_TPS = \
+                prompt_token / metadata.get('prompt_eval_duration', -1) * 1e9
+            session_stats.generation_TPS = \
+                generation_token / metadata.get('eval_duration', -1) * 1e9
+            session_stats.display_session_stats(client.num_ctx)
 
             # Add assistant response to messages for context
             if content_response != "":
