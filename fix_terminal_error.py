@@ -114,6 +114,7 @@ The user has provided the following debug logs/error messages. Analyze them, exp
 Debug Context:
 {debug_text}
 """
+
     # Call ollama generate
     stream_ollama_generate(prompt,
                            ollama_url=ollama_url,
@@ -175,7 +176,13 @@ if __name__ == "__main__":
         args.consult = True
 
     # Force consult mode if data is piped or -c flag is used
+    ollama_url = f'http://{args.host}:{args.port}'
     if not sys.stdin.isatty() or args.consult:
-        run_consult_mode()
+        run_consult_mode(ollama_url=ollama_url,
+                         model=args.model,
+                         ctx_window=args.ctx)
     else:
-        run_auto_mode(full_command)
+        run_auto_mode(full_command,
+                      ollama_url=ollama_url,
+                      model=args.model,
+                      ctx_window=args.ctx)
