@@ -18,9 +18,20 @@ from typing import Dict, Iterator, List, Optional, Union
 import ollama
 import requests
 from huggingface_hub import hf_hub_download
+from rich.console import Console, Group
+from rich.live import Live
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.prompt import Confirm
+from rich.spinner import Spinner
+from rich.table import Table
 from tokenizers import Tokenizer
 
-from ollama_utils import get_input_from_editor, print_context_warning
+from ollama_utils import (get_input_from_editor, preview_image_file,
+                          preview_text_file, print_context_warning)
+
+# Initialize the global rich console
+console = Console()
 
 PERSONAS = {
     "coder":
@@ -136,33 +147,58 @@ class OllamaStats():
         self.context_window = context_window
 
     def display(self, session_stats):
-        # Stats
-        print("\n[Statistics]")
-        print(f'- Performance')
-        # TTFT
-        print(f"  - First token latency (TTFT): "
-              f"{self.TTFT:.2f} sec")
-        # TPS
-        print(f"  - Prompt prefilling: "
-              f"{self.prompt_TPS:.1f} tokens/sec")
-        print(f"  - Token generation: "
-              f"{self.generation_TPS:.1f} tokens/sec")
-        # Token stats
-        print(f"- Token Usage")
-        print(f"  - Input Tokens: {self.total_input_token}")
-        print(f"    - Estimate System Prompt: {self.system_prompt_token}")
-        print(f"    - Estimate User Prompt: {self.user_prompt_token}")
-        print(f"  - Output Tokens: {self.total_output_token}")
-        print(f"    - Estimate Thinking: {self.thinking_token}")
-        print(f"    - Estimate Content: {self.content_token}")
-        print(f"  - Total (Input + Output) Tokens: "
-              f"{self.total_input_token + self.total_output_token}")
-        print(f"- Context Window Usage")
-        print(
-            f"  - Used: "
-            f"{self.total_input_token + self.total_output_token}/{self.context_window} "
-            f"({(self.total_input_token + self.total_output_token)/self.context_window:.1%})"
+        # Create the table
+        table = Table(title="📊 Session Statistics",
+                      border_style="blue",
+                      header_style="bold magenta")
+        table.add_column("Category / Metric", style="white")
+        table.add_column("Value", justify="right", style="bold green")
+
+        # --- Performance ---
+        table.add_row("[bold cyan]Performance[/bold cyan]", "")
+        table.add_row("  ↳ First token latency (TTFT)", f"{self.TTFT:.2f} sec")
+        table.add_row("  ↳ Prompt prefilling",
+                      f"{self.prompt_TPS:.1f} tokens/sec")
+        table.add_row("  ↳ Token generation",
+                      f"{self.generation_TPS:.1f} tokens/sec")
+
+        table.add_section()  # Adds a subtle divider line
+
+        # --- Token Usage ---
+        total_tokens = self.total_input_token + self.total_output_token
+        table.add_row("[bold cyan]Token Usage[/bold cyan]", "")
+        table.add_row("  ↳ Input Tokens", str(self.total_input_token))
+        table.add_row("      • Estimate System Prompt",
+                      str(self.system_prompt_token),
+                      style="dim")
+        table.add_row("      • Estimate User Prompt",
+                      str(self.user_prompt_token),
+                      style="dim")
+        table.add_row("  ↳ Output Tokens", str(self.total_output_token))
+        table.add_row("      • Estimate Thinking",
+                      str(self.thinking_token),
+                      style="dim")
+        table.add_row("      • Estimate Content",
+                      str(self.content_token),
+                      style="dim")
+        table.add_row("  ↳ [bold]Total (Input + Output)[/bold]",
+                      f"[bold]{total_tokens}[/bold]")
+
+        table.add_section()
+
+        # --- Context Window Usage ---
+        # Prevent division by zero just in case
+        usage_pct = (total_tokens / self.context_window) if getattr(
+            self, 'context_window', 0) else 0
+        table.add_row("[bold cyan]Context Window Usage[/bold cyan]", "")
+        table.add_row(
+            "  ↳ Used",
+            f"{total_tokens} / {self.context_window} ([yellow]{usage_pct:.1%}[/yellow])"
         )
+
+        # Print the final table
+        print()  # Add a little padding above the table
+        console.print(table)
 
 
 class OllamaClient:
@@ -676,19 +712,18 @@ class OllamaClient:
 
 def list_all_models(client, with_index=True, with_info=True):
     """
-    List all models faster using parallel threads for metadata fetching.
+    List all models faster using parallel threads for metadata fetching,
+    rendered with a rich Table and Status spinner.
     """
     models = []
 
     try:
         models = client.list_models()
         if not models:
-            print("\nNo models found.")
+            console.print("\n[yellow]No models found.[/yellow]")
             return []
 
-        print(f"\nFetching info for {len(models)} models...")
-
-        # This list will store our results in the correct order
+        # This list will store our dictionary results in the correct order
         results = [None] * len(models)
 
         def fetch_info(index, model):
@@ -697,104 +732,132 @@ def list_all_models(client, with_index=True, with_info=True):
             size_raw = model.get('size', 0)
             size_gb = f"{float(size_raw) / (1024**3):.2f}" if size_raw else "N/A"
 
-            info_str = ""
+            capability = "N/A"
+            params = "N/A"
+
             if with_info:
-                # Parallel API call
-                model_info = client.show_model_info(name)
-                capability = model_info.get('capabilities', 'N/A')
-                params = model_info['details'].get('parameter_size', 'N/A')
-                info_str = f"{capability}, Param: {params}, "
+                try:
+                    # Parallel API call
+                    model_info = client.show_model_info(name)
+                    capability = str(model_info.get('capabilities', 'N/A'))
+                    params = str(model_info['details'].get(
+                        'parameter_size', 'N/A'))
+                except Exception:
+                    pass
 
-            prefix = f"{index + 1:02d}. " if with_index else "- "
-            return index, f"{prefix}{name} ({info_str}Size: {size_gb} GB)"
+            return index, {
+                "name": name,
+                "capability": capability,
+                "params": params,
+                "size_gb": size_gb
+            }
 
-        # Use ThreadPoolExecutor to fetch info in parallel
-        # max_workers=10 is usually a sweet spot for local Ollama servers
-        try:
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                future_to_model = {
-                    executor.submit(fetch_info, i, m): i
-                    for i, m in enumerate(models)
-                }
+        # Show a rich spinner while threading
+        with console.status(
+                f"[bold cyan]Fetching info for {len(models)} models...",
+                spinner="dots"):
+            try:
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    future_to_model = {
+                        executor.submit(fetch_info, i, m): i
+                        for i, m in enumerate(models)
+                    }
 
-                for future in as_completed(future_to_model):
-                    idx, text = future.result()
-                    results[idx] = text
-        except KeyboardInterrupt:
-            # Handle Ctrl+C during parallel execution
-            print("\n[INTERRUPT] Cancelling data fetch...")
-            executor.shutdown(wait=False, cancel_futures=True)
-            return models
+                    for future in as_completed(future_to_model):
+                        idx, data_dict = future.result()
+                        results[idx] = data_dict
+            except KeyboardInterrupt:
+                console.print(
+                    "\n[bold red][INTERRUPT] Cancelling data fetch...[/bold red]"
+                )
+                executor.shutdown(wait=False, cancel_futures=True)
+                return models
 
-        # Print final ordered list
-        print("\nAvailable models:")
-        for line in results:
-            if line:
-                print(line)
-                time.sleep(0.05)
+        # Build the Table once all data is collected
+        table = Table(title="Available Models", border_style="blue")
+
+        if with_index:
+            table.add_column("Index", style="dim", width=5)
+        table.add_column("Model Name", style="bold green")
+
+        if with_info:
+            table.add_column("Capabilities")
+            table.add_column("Params", justify="right")
+
+        table.add_column("Size (GB)", justify="right", style="cyan")
+
+        # Populate the table
+        for i, row_data in enumerate(results):
+            if row_data:
+                row = []
+                if with_index:
+                    row.append(f"{i+1:02d}.")
+
+                row.append(row_data["name"])
+
+                if with_info:
+                    row.append(row_data["capability"])
+                    row.append(row_data["params"])
+
+                row.append(row_data["size_gb"])
+
+                table.add_row(*row)
+
+        print()  # Add a little padding above the table
+        console.print(table)
 
     except Exception as e:
-        print(f"Error: {e}")
+        console.print(f"[bold red]Error: {e}[/bold red]")
 
     return models
 
 
 def list_running_models(client, with_index=True):
-    """
-    List all the running models on a specified platform.
-
-    Args:
-        with_index (bool): If True, include model indices in the output. Default is True.
-
-    Returns:
-        list: A list of dictionaries containing information about each running model.
-        Each dictionary includes 'name', 'capability', and 'size' fields.
-    """
     models = []
-
     try:
         models = client.list_running_models()
         if models:
-            print("\nRunning models:")
-            for i, model in enumerate(models):
+            table = Table(title="Currently Running Models",
+                          border_style="green")
+            if with_index:
+                table.add_column("Index", style="dim", width=5)
+            table.add_column("Model Name", style="bold green")
+            table.add_column("Capabilities")
+            table.add_column("Params", justify="right")
+            table.add_column("Size (GB)", justify="right", style="cyan")
+            table.add_column("vRAM (GB)", justify="right", style="magenta")
+            table.add_column("Ctx Len", justify="right")
 
+            for i, model in enumerate(models):
                 model_size = model.get('size', 'N/A')
                 if model_size != 'N/A':
-                    model_size = float(model_size) / 1024 / 1024 / 1024
-                    model_size = f'{model_size:.2f}'
+                    model_size = f"{float(model_size) / (1024**3):.2f}"
+
                 size_vram = model.get('size_vram', 'N/A')
                 if size_vram != 'N/A':
-                    size_vram = float(size_vram) / 1024 / 1024 / 1024
-                    size_vram = f'{size_vram:.2f}'
-                num_ctx = model.get('context_length', 'N/A')
-                if num_ctx != 'N/A':
-                    num_ctx = int(num_ctx)
-                expires_at = model.get('expires_at', 'N/A')
+                    size_vram = f"{float(size_vram) / (1024**3):.2f}"
 
-                # Model info
+                num_ctx = str(model.get('context_length', 'N/A'))
+
                 model_info = client.show_model_info(model['name'])
-                model_capability = model_info.get('capabilities', 'N/A')
-                model_params = model_info['details'].get(
-                    'parameter_size', 'N/A')
-                model_quant = model_info['details'].get(
-                    'quantization_level', 'N/A')
+                model_cap = str(model_info.get('capabilities', 'N/A'))
+                model_params = str(model_info['details'].get(
+                    'parameter_size', 'N/A'))
 
-                # Print
+                row_data = [
+                    model['name'], model_cap, model_params, model_size,
+                    size_vram, num_ctx
+                ]
                 if with_index:
-                    print(
-                        f"{i+1:02d}. {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {num_ctx}, Expires: {expires_at})"
-                    )
-                else:
-                    print(
-                        f"- {model['name']} ({model_capability}, Param: {model_params}, Size: {model_size} GB, vRAM: {size_vram} GB, CTX_LEN: {num_ctx}, Expires: {expires_at})"
-                    )
+                    row_data.insert(0, f"{i+1:02d}.")
 
+                table.add_row(*row_data)
+
+            console.print(table)
         else:
-            print("\nNo models currently running.")
-
+            console.print("[yellow]\nNo models currently running.[/yellow]")
     except Exception as e:
-        print(f"Error: {e}")
-
+        console.print(f"[red]Error: {e}[/red]")
     return models
 
 
@@ -965,6 +1028,11 @@ def handle_common_commands(user_input: str, client, current_system: str = ""):
             path = input(f"{item_type.capitalize()} path: ").strip()
             if not path:
                 break
+            path = os.path.expanduser(path)
+            if item_type == "image":
+                preview_image_file(path)
+            elif item_type == "file":
+                preview_text_file(path)
             paths.append(path)
 
         new_prompt = input(f"\n>>> You (Prompt for {item_type}s): \n").strip()
@@ -1008,31 +1076,34 @@ def generate_completion_with_model(client, running_only=False):
     session_stats = OllamaStats(client.num_ctx)
 
     # Define the help menu
-    generate_help_menu = f"""
-        \033[96m=== Generate completion with {model_name} ===\033[0m
+    generate_help_text = """[bold yellow]Core Commands:[/bold yellow]
+  [cyan]/help[/cyan]             : Show this menu
+  [cyan]/exit[/cyan]             : Exit the session
+  [cyan]/edit[/cyan]             : Open editor (Vim/Nano) to write a multi-line prompt
+  [cyan]/system [text][/cyan]    : Update system prompt (leave blank to open editor)
+  [cyan]/persona [name][/cyan]   : Load a preset system prompt (leave blank to list all)
 
-        \033[93mCore Commands:\033[0m
-        - /help             : Show this menu
-        - /exit             : Exit the session
-        - /edit             : Open editor (Vim/Nano) to write a multi-line prompt
-        - /system [text]    : Update system prompt (leave blank to open editor)
-        - /persona [name]   : Load a preset system prompt (leave blank to list all)
+[bold yellow]History & Flow:[/bold yellow]
+  [cyan]/continue (or /c)[/cyan]: Continue generation (opens editor to review/append)
+  [cyan]/history (or /h)[/cyan] : View and edit full generation history in editor
+  [cyan]/clear[/cyan]            : Clear current history completely
+  [cyan]/save [file][/cyan]      : Save history to Markdown (default: generation_history.md)
 
-        \033[93mHistory & Flow:\033[0m
-        - /continue (or /c) : Continue generation (opens editor to review/append)
-        - /history (or /h)  : View and edit full generation history in editor
-        - /clear            : Clear current history completely
-        - /save [file]      : Save history to Markdown (default: generation_history.md)
+[bold yellow]Model Settings:[/bold yellow]
+  [cyan]/ctx [number][/cyan]     : View or change context length (e.g., /ctx 8192)
+  [cyan]/keepalive [time][/cyan] : View or change model keep-alive time (e.g., 30m)
 
-        \033[93mModel Settings:\033[0m
-        - /ctx [number]     : View or change context length (e.g., /ctx 8192)
-        - /keepalive [time] : View or change model keep-alive time (e.g., 30m)
+[bold yellow]Attachments:[/bold yellow]
+  [cyan]/image[/cyan]            : Load image paths for Vision Models
+  [cyan]/file[/cyan]             : Load text file paths to include in prompt"""
 
-        \033[93mAttachments:\033[0m
-        - /image            : Load image paths for Vision Models
-        - /file             : Load text file paths to include in prompt
-        """
-    print(generate_help_menu)  # Print once on startup
+    # Print once on startup inside a stylized panel
+    console.print(
+        Panel(generate_help_text,
+              title=
+              f"[bold cyan]Generate completion with {model_name}[/bold cyan]",
+              border_style="cyan",
+              expand=False))
 
     # Load model
     start_time = time.time()
@@ -1061,7 +1132,14 @@ def generate_completion_with_model(client, running_only=False):
             break
 
         elif cmd_res["status"] == "help":
-            print(generate_help_menu)
+            # Print once on startup inside a stylized panel
+            console.print(
+                Panel(
+                    generate_help_text,
+                    title=
+                    f"[bold cyan]Generate completion with {model_name}[/bold cyan]",
+                    border_style="cyan",
+                    expand=False))
             continue
 
         elif cmd_res["status"] == "update_system":
@@ -1133,46 +1211,55 @@ def generate_completion_with_model(client, running_only=False):
         if not user_input and not image_paths and not file_paths:
             continue
 
-        print(f"\n<<< Model ({model_name}): ")
-        stop_spinner = threading.Event()
-        spinner_thread = threading.Thread(target=client._spinner_task,
-                                          args=(stop_spinner,
-                                                client.stdout_lock))
-        spinner_thread.start()
+        # --- 2. API Call & Rendering ---
+        console.print(f"\n[bold cyan]<<< Model ({model_name}):[/bold cyan]")
 
         start_time = time.time()
         first_token_time, last_token_time = None, None
         full_response, first_token_latency = "", None
+        metadata = {}
+
         try:
-            # Send request to server
-            response = client.generate(model_name,
-                                       prompt=user_input,
-                                       num_ctx=client.num_ctx)
-
-            # Get first full token to measure first token time
-            first_token_received = False
             if client.stream:
-                # Decode response
-                for chunk in response:
-                    if "response" in chunk:
-                        content = chunk["response"]
-                        # Record time of first token
-                        if not first_token_received:
-                            first_token_time = time.time()
-                            first_token_received = True
-                            # Stop the spinner
-                            stop_spinner.set()
-                            spinner_thread.join(timeout=1)
-                        # Record time of latest token
-                        last_token_time = time.time()
-                        # Display with typing effect
-                        client._print_typing_effect(content,
-                                                    client.stdout_lock)
-                        full_response += content
+                from rich.live import Live
+                from rich.markdown import Markdown
+                from rich.spinner import Spinner
 
-                    # Capture final statistics from the last chunk
-                    if chunk.get("done"):
-                        metadata = chunk
+                # 1. Initialize the Spinner object
+                loading_spinner = Spinner(
+                    "dots", text="[bold yellow]Generating response...")
+
+                # 2. Start the Live context WITH the spinner BEFORE calling the API
+                with Live(loading_spinner,
+                          console=console,
+                          refresh_per_second=15,
+                          vertical_overflow="visible") as live:
+
+                    # 3. Send request to server inside Live so spinner plays
+                    response = client.generate(model_name,
+                                               prompt=user_input,
+                                               num_ctx=client.num_ctx)
+
+                    first_token_received = False
+
+                    for chunk in response:
+                        if "response" in chunk:
+                            content = chunk["response"]
+
+                            # Record time of first token
+                            if not first_token_received:
+                                first_token_time = time.time()
+                                first_token_received = True
+
+                            last_token_time = time.time()
+                            full_response += content
+
+                            # Overwrite the Spinner with Live Markdown
+                            live.update(Markdown(full_response))
+
+                        # Capture final statistics from the last chunk
+                        if chunk.get("done"):
+                            metadata = chunk
 
                 # Calculate TTFT
                 if first_token_time is not None:
@@ -1180,14 +1267,22 @@ def generate_completion_with_model(client, running_only=False):
                 print()
 
             else:
+                # --- Non-Streaming Mode ---
+                from rich.markdown import Markdown
+
+                with console.status("[bold yellow]Generating response...",
+                                    spinner="dots"):
+                    response = client.generate(model_name,
+                                               prompt=user_input,
+                                               num_ctx=client.num_ctx)
+
                 metadata = response
                 first_token_latency = -1
                 full_response = response.get("response", "No response")
-                print(full_response)
 
-                # Stop the spinner
-                stop_spinner.set()
-                spinner_thread.join(timeout=1)
+                console.print(Markdown(full_response))
+
+            # --- 3. Post-Generation Stats & Cleanup ---
 
             # Content window warning
             print_context_warning(
@@ -1195,7 +1290,7 @@ def generate_completion_with_model(client, running_only=False):
                 ctx_window=client.num_ctx,
             )
 
-            # Stats
+            # Stats (Ensure safe division just in case)
             session_stats.TTFT = first_token_latency
             prompt_token = metadata.get('prompt_eval_count', 0)
             generation_token = metadata.get('eval_count', 0)
@@ -1203,23 +1298,29 @@ def generate_completion_with_model(client, running_only=False):
             session_stats.total_output_token = generation_token
             session_stats.system_prompt_token = tok.count(system_prompt)
             session_stats.user_prompt_token = tok.count(user_input)
-            session_stats.think_token = 0  # tok.count(thinking_response)
-            session_stats.content_token = 0  #tok.count(content_response)
-            session_stats.prompt_TPS = \
-                prompt_token / metadata.get('prompt_eval_duration', -1) * 1e9
-            session_stats.generation_TPS = \
-                generation_token / metadata.get('eval_duration', -1) * 1e9
+            session_stats.think_token = 0
+            session_stats.content_token = generation_token
+
+            prompt_dur = metadata.get('prompt_eval_duration', -1)
+            eval_dur = metadata.get('eval_duration', -1)
+
+            session_stats.prompt_TPS = (prompt_token / prompt_dur *
+                                        1e9) if prompt_dur > 0 else 0
+            session_stats.generation_TPS = (generation_token / eval_dur *
+                                            1e9) if eval_dur > 0 else 0
+
             session_stats.display(client.num_ctx)
 
         except KeyboardInterrupt:
-            stop_spinner.set()  # Stop the spinner thread
-            spinner_thread.join(timeout=1)
-            print("\n\n[INTERRUPTED] Stopping generation...")
+            console.print(
+                "\n\n[bold red][INTERRUPTED] Stopping generation...[/bold red]"
+            )
             continue
 
         # Handle exceptions
         except Exception as e:
-            print(f"\n[ERROR] Error during chat: {e}")
+            console.print(
+                f"\n[bold red][ERROR] Error during generation: {e}[/bold red]")
 
         # Add generated response to history
         else:
@@ -1246,29 +1347,31 @@ def chat_with_model(client, running_only=False):
             print(f'[ERROR] Not a valid model name: {model_name}')
             return
 
-    # Define the help menu
-    chat_help_menu = f"""
-        \033[96m=== Chat with {model_name} ===\033[0m
+    # Define and print the help menu using rich
+    chat_help_text = """[bold yellow]Core Commands:[/bold yellow]
+  [cyan]/help[/cyan]             : Show this menu
+  [cyan]/exit[/cyan]             : Exit the chat session
+  [cyan]/edit[/cyan]             : Open editor (Vim/Nano) to write a multi-line prompt
+  [cyan]/system [text][/cyan]    : Update system prompt (leave blank to open editor)
+  [cyan]/persona [name][/cyan]   : Load a preset system prompt (leave blank to list all)
+  [cyan]/save [file][/cyan]      : Save chat to JSON (default: chat_history.json)
+  [cyan]/load [file][/cyan]      : Load chat from JSON (default: chat_history.json)
 
-        \033[93mCore Commands:\033[0m
-        - /help             : Show this menu
-        - /exit             : Exit the chat session
-        - /edit             : Open editor (Vim/Nano) to write a multi-line prompt
-        - /system [text]    : Update system prompt (leave blank to open editor)
-        - /persona [name]   : Load a preset system prompt (leave blank to list all)
-        - /save [file]      : Save chat to JSON (default: chat_history.json)
-        - /load [file]      : Load chat from JSON (default: chat_history.json)
+[bold yellow]Model Settings:[/bold yellow]
+  [cyan]/think [on|off][/cyan]   : Toggle reasoning/thinking mode (for supported models)
+  [cyan]/ctx [number][/cyan]     : View or change context length (e.g., /ctx 8192)
+  [cyan]/keepalive [time][/cyan] : View or change model keep-alive time (e.g., 30m)
 
-        \033[93mModel Settings:\033[0m
-        - /think [on|off]   : Toggle reasoning/thinking mode (for supported models)
-        - /ctx [number]     : View or change context length (e.g., /ctx 8192)
-        - /keepalive [time] : View or change model keep-alive time (e.g., 30m)
+[bold yellow]Attachments:[/bold yellow]
+  [cyan]/image[/cyan]            : Load image paths for Vision Models
+  [cyan]/file[/cyan]             : Load text file paths to include in prompt"""
 
-        \033[93mAttachments:\033[0m
-        - /image            : Load image paths for Vision Models
-        - /file             : Load text file paths to include in prompt
-        """
-    print(chat_help_menu)  # Print once on startup
+    # Print once on startup inside a stylized panel
+    console.print(
+        Panel(chat_help_text,
+              title=f"[bold cyan]Chat with {model_name}[/bold cyan]",
+              border_style="cyan",
+              expand=False))
 
     # Load model
     start_time = time.time()
@@ -1307,7 +1410,11 @@ def chat_with_model(client, running_only=False):
             break
 
         elif cmd_res["status"] == "help":
-            print(chat_help_menu)
+            console.print(
+                Panel(chat_help_text,
+                      title=f"[bold cyan]Chat with {model_name}[/bold cyan]",
+                      border_style="cyan",
+                      expand=False))
             continue
 
         elif cmd_res["status"] == "update_system":
@@ -1387,7 +1494,7 @@ def chat_with_model(client, running_only=False):
             continue
 
         # --- 2. API Call & Rendering ---
-        print(f"\n<<< Model ({model_name}): ")
+        console.print(f"\n[bold cyan]<<< Model ({model_name}):[/bold cyan]")
 
         # Track full response and performance data
         start_time = time.time()
@@ -1399,104 +1506,127 @@ def chat_with_model(client, running_only=False):
 
         # Tracking states for formatting
         currently_thinking = False
-        content_started = False
-
-        # Spinner for loading animation
-        stop_spinner = threading.Event()
-        spinner_thread = threading.Thread(target=client._spinner_task,
-                                          args=(stop_spinner,
-                                                client.stdout_lock))
-        spinner_thread.start()
 
         try:
-            # Send request to server
-            response, messages = client.chat(model_name,
-                                             prompt=user_input,
-                                             messages=messages,
-                                             image_paths=image_paths,
-                                             file_paths=file_paths,
-                                             think=client.think,
-                                             num_ctx=client.num_ctx)
-            is_generating = True
-
-            # Get first full token to measure first token time
-            first_token_received = False
             if client.stream:
-                # Decode response
-                for chunk in response:
-                    if "message" in chunk and chunk["message"].get("thinking"):
-                        thinking = chunk["message"]["thinking"]
-                        # Record time of first token
-                        if not first_token_received:
-                            first_token_time = time.time()
-                            first_token_received = True
-                            # Stop the spinner
-                            stop_spinner.set()
-                            spinner_thread.join(timeout=1)
+                # Initialize a standalone Spinner object
+                loading_spinner = Spinner(
+                    "dots", text="[bold yellow]Waiting for model...")
 
-                            # Print Thinking Block Header
-                            print(f"\n\033[90m[THINKING]\033[0m")
+                # Start the Live rendering context
+                with Live(loading_spinner,
+                          console=console,
+                          refresh_per_second=15,
+                          vertical_overflow="visible") as live:
+
+                    # Send request to server
+                    response, messages = client.chat(model_name,
+                                                     prompt=user_input,
+                                                     messages=messages,
+                                                     image_paths=image_paths,
+                                                     file_paths=file_paths,
+                                                     think=client.think,
+                                                     num_ctx=client.num_ctx)
+                    is_generating = True
+                    first_token_received = False
+
+                    for chunk in response:
+                        msg = chunk.get("message", {})
+
+                        # --- 1. Handle Thinking Tokens ---
+                        if msg.get("thinking"):
+                            thinking = msg["thinking"]
+                            if not first_token_received:
+                                first_token_time = time.time()
+                                first_token_received = True
+
                             currently_thinking = True
+                            last_token_time = time.time()
 
-                        # Record time of latest token
-                        last_token_time = time.time()
-                        # Display with typing effect
-                        client._print_typing_effect(thinking,
-                                                    client.stdout_lock)
-                        full_response += thinking
-                        thinking_response += thinking
+                            thinking_response += thinking
+                            full_response += thinking
 
-                    if "message" in chunk and chunk["message"].get("content"):
-                        content = chunk["message"]["content"]
+                            # Update live view with ONLY the thinking panel
+                            live.update(
+                                Panel(thinking_response,
+                                      title="🧠 Thinking",
+                                      border_style="dim"))
 
-                        # If we were just thinking, close the block before printing content
-                        if currently_thinking:
-                            print(f"\n\033[90m[END THOUGHTS]\033[0m\n")
-                            currently_thinking = False
+                        # --- 2. Handle Content Tokens (Markdown) ---
+                        if msg.get("content"):
+                            content = msg["content"]
+                            if not first_token_received:
+                                first_token_time = time.time()
+                                first_token_received = True
 
-                        # Record time of first token
-                        if not first_token_received:
-                            first_token_time = time.time()
-                            first_token_received = True
-                            # Stop the spinner
-                            stop_spinner.set()
-                            spinner_thread.join(timeout=1)
+                            # *** THE FIX: The Transition State ***
+                            if currently_thinking:
+                                # Lock the finalized thinking block into the terminal history
+                                live.console.print(
+                                    Panel(thinking_response,
+                                          title="🧠 Thinking Complete",
+                                          border_style="dim"))
+                                currently_thinking = False
 
-                        # Record time of latest token
-                        last_token_time = time.time()
-                        # Display with typing effect
-                        client._print_typing_effect(content,
-                                                    client.stdout_lock)
-                        full_response += content
-                        content_response += content
+                                # Clear the live display so it stops redrawing the massive thinking block
+                                live.update("")
 
-                    # Track token info for TPS calculation
-                    if "eval_count" in chunk:
-                        token_count = chunk["eval_count"]
+                            last_token_time = time.time()
 
-                    # Capture final statistics from the last chunk
-                    if chunk.get("done"):
-                        metadata = chunk
+                            content_response += content
+                            full_response += content
 
-                        # Ensure we close thinking block if model finished without content
-                        if currently_thinking:
-                            print(f"\n\033[90m[END THOUGHTS]\033[0m\n")
+                            # Now ONLY render the markdown content in the Live display
+                            live.update(Markdown(content_response))
+
+                        # --- 3. Track Token Statistics ---
+                        if "eval_count" in chunk:
+                            token_count = chunk["eval_count"]
+
+                        if chunk.get("done"):
+                            metadata = chunk
+
+                            # Edge case: Model finished while STILL thinking (no content at all)
+                            if currently_thinking:
+                                live.console.print(
+                                    Panel(thinking_response,
+                                          title="🧠 Thinking Complete",
+                                          border_style="dim"))
+                                live.update("")
 
                 if first_token_time is not None:
                     first_token_latency = first_token_time - start_time
                 print()
 
             else:
+                with console.status("[bold yellow]Waiting for model...",
+                                    spinner="dots"):
+                    # Send request to server
+                    response, messages = client.chat(model_name,
+                                                     prompt=user_input,
+                                                     messages=messages,
+                                                     image_paths=image_paths,
+                                                     file_paths=file_paths,
+                                                     think=client.think,
+                                                     num_ctx=client.num_ctx)
+                    is_generating = True
+
+                # --- Non-Streaming Mode ---
                 metadata = response
                 first_token_latency = -1
-                full_response = response.get("message",
-                                             {}).get("content", "No response")
-                content_response = full_response
-                print(full_response)
+                msg = response.get("message", {})
 
-                # Stop the spinner
-                stop_spinner.set()
-                spinner_thread.join(timeout=1)
+                thinking_response = msg.get("thinking", "")
+                content_response = msg.get("content", "No response")
+                full_response = thinking_response + content_response
+
+                # Render output statically at the end
+                if thinking_response:
+                    console.print(
+                        Panel(thinking_response,
+                              title="🧠 Thinking Complete",
+                              border_style="dim"))
+                console.print(Markdown(content_response))
 
             # Content window warning
             print_context_warning(
@@ -1532,8 +1662,6 @@ def chat_with_model(client, running_only=False):
             # Remove user input if interrupted during output generation
             if is_generating:
                 messages.pop()
-            stop_spinner.set()  # Stop the spinner thread
-            spinner_thread.join(timeout=1)
             print("\n\n[INTERRUPTED] Stopping generation...")
             continue
 
@@ -1546,11 +1674,17 @@ def main_menu(client):
 
     while True:
         # We access host from the client object so it reflects changes made in config_menu
-        print(f"\n=== Ollama API Client for [{client.host}:{client.port}] ===")
-        print("0. Exit")
-        print("1. Interactive Sessions")
-        print("2. Model Management")
-        print("3. Server Configuration (Host/Port)")
+        menu_text = ("0. Exit\n"
+                     "1. Interactive Sessions\n"
+                     "2. Model Management\n"
+                     "3. Server Configuration (Host/Port)")
+        console.print(
+            Panel(
+                menu_text,
+                title=
+                f"Ollama API Client [[bold green]{client.host}:{client.port}[/bold green]]",
+                border_style="blue",
+                expand=False))
 
         choice = input("\nSelect Category (0-3): ")
 
@@ -1570,17 +1704,23 @@ def main_menu(client):
 def config_menu(client):
 
     while True:
-        print("\n--- Server & Generation Configuration ---")
-        print(f"1. Host:         {client.host}")
-        print(f"2. Port:         {client.port}")
-        print(f"3. Context Win:  {client.num_ctx}")
-        print(f"4. Top_k:        {client.top_k}")
-        print(f"5. Top_p:        {client.top_p}")
-        print(f"6. Temperature:  {client.temperature}")
-        print(f"7. Stream Mode:  {'ON' if client.stream else 'OFF'}")
-        print(f"8. Keep Alive:   {client.keep_alive}")
-        print("------------------------------------------")
-        print("0. Back to Main Menu")
+        table = Table(title="Server & Generation Configuration",
+                      border_style="yellow")
+        table.add_column("Option", style="cyan", justify="center")
+        table.add_column("Setting", style="magenta")
+        table.add_column("Current Value", style="bold green")
+
+        table.add_row("1", "Host", str(client.host))
+        table.add_row("2", "Port", str(client.port))
+        table.add_row("3", "Context Win", str(client.num_ctx))
+        table.add_row("4", "Top_k", str(client.top_k))
+        table.add_row("5", "Top_p", str(client.top_p))
+        table.add_row("6", "Temperature", str(client.temperature))
+        table.add_row("7", "Stream Mode", 'ON' if client.stream else 'OFF')
+        table.add_row("8", "Keep Alive", str(client.keep_alive))
+        table.add_row("0", "Back to Main Menu", "-")
+
+        console.print(table)
 
         choice = input("\nSelect setting to change (0-8): ")
 
@@ -1631,12 +1771,16 @@ def config_menu(client):
 def management_menu(client):
 
     while True:
-        print("\n--- Model Management ---")
-        print("0. Back to Main Menu")
-        print("1. List Currently Running Models")
-        print("2. List All Available Models")
-        print("3. Load Model into Memory")
-        print("4. Unload Model (Free VRAM)")
+        menu_text = ("0. Back to Main Menu\n"
+                     "1. List Currently Running Models\n"
+                     "2. List All Available Models\n"
+                     "3. Load Model into Memory\n"
+                     "4. Unload Model (Free VRAM)")
+        console.print(
+            Panel(menu_text,
+                  title="Model Management",
+                  border_style="green",
+                  expand=False))
 
         choice = input("\nChoice: ")
         if choice == "0": break
@@ -1649,12 +1793,16 @@ def management_menu(client):
 def interaction_menu(client):
 
     while True:
-        print("\n--- Interactive Sessions ---")
-        print("0. Back to Main Menu")
-        print("1. Chat (Select from RUNNING models only)")
-        print("2. Chat (Select from ALL models)")
-        print("3. Generate (Select from RUNNING models only)")
-        print("4. Generate (Select from ALL models)")
+        menu_text = ("0. Back to Main Menu\n"
+                     "1. Chat (Select from RUNNING models only)\n"
+                     "2. Chat (Select from ALL models)\n"
+                     "3. Generate (Select from RUNNING models only)\n"
+                     "4. Generate (Select from ALL models)")
+        console.print(
+            Panel(menu_text,
+                  title="Interactive Sessions",
+                  border_style="magenta",
+                  expand=False))
 
         choice = input("\nChoice: ")
         if choice == "0": break
@@ -1742,15 +1890,27 @@ if __name__ == "__main__":
     client.stream = not args.no_stream
 
     # Menu
-    try:
-        main_menu(client)
-    except KeyboardInterrupt:
-        print("\n\n[TERMINATED] Program closed by user.")
-    except Exception as e:
-        print(f"\n\n[CRITICAL ERROR] {e}")
-    finally:
-        # This runs NO MATTER WHAT
-        # Clears the line and ensures the terminal cursor is visible
-        sys.stdout.write('\r' + ' ' * 80 + '\r')
-        sys.stdout.flush()
-        print("[INFO] Session ended. Terminal cleaned.")
+    while True:
+        try:
+            # Run the main menu.
+            # If the user selects '0', main_menu() finishes naturally and we break the loop to exit.
+            main_menu(client)
+            break
+
+        except KeyboardInterrupt:
+            # Print a newline so the prompt doesn't overlap with whatever input() was asking
+            console.print()
+
+            # Show a beautiful Y/N prompt
+            if Confirm.ask(
+                    "[bold red]Are you sure you want to terminate the Ollama client?[/bold red]",
+                    default=True):
+                console.print("[bold cyan]Goodbye![/bold cyan]")
+                sys.exit(0)
+            else:
+                # If they type 'n', the loop restarts and launches main_menu(client) again
+                console.print("[dim]Resuming session...[/dim]")
+
+        except Exception as e:
+            console.print(f"\n\n[bold red][CRITICAL ERROR] {e}[/bold red]")
+            sys.exit(1)
