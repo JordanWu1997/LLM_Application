@@ -18,6 +18,7 @@ from typing import Dict, Iterator, List, Optional, Union
 import ollama
 import requests
 from huggingface_hub import hf_hub_download
+from rich.columns import Columns
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -29,11 +30,6 @@ from tokenizers import Tokenizer
 
 from ollama_utils import (get_input_from_editor, preview_image_file,
                           preview_text_file, print_context_warning)
-
-# Detect if the user is running the script inside a tmux session
-# We use "ellipsis" for tmux to prevent scrollback corruption,
-# and "visible" for standard terminals to enable auto-scrolling.
-TMUX_SAFE_OVERFLOW = "ellipsis" if os.environ.get("TMUX") else "visible"
 
 # Initialize the global rich console
 console = Console()
@@ -151,59 +147,81 @@ class OllamaStats():
     def update_context_window(self, context_window):
         self.context_window = context_window
 
-    def display(self, session_stats):
-        # Create the table
-        table = Table(title="📊 Session Statistics",
-                      border_style="blue",
-                      header_style="bold magenta")
-        table.add_column("Category / Metric", style="white")
-        table.add_column("Value", justify="right", style="bold green")
+    def display(self, context_window=None):
 
-        # --- Performance ---
-        table.add_row("[bold cyan]Performance[/bold cyan]", "")
-        table.add_row("  ↳ First token latency (TTFT)", f"{self.TTFT:.2f} sec")
-        table.add_row("  ↳ Prompt prefilling",
-                      f"{self.prompt_TPS:.1f} tokens/sec")
-        table.add_row("  ↳ Token generation",
-                      f"{self.generation_TPS:.1f} tokens/sec")
+        # Use passed context_window or fallback to class attribute
+        ctx = context_window if context_window else getattr(
+            self, 'context_window', 8192)
 
-        table.add_section()  # Adds a subtle divider line
+        # ---------------------------------------------------------
+        # Panel 1: Performance
+        # ---------------------------------------------------------
+        perf_table = Table(box=None, show_header=False, padding=(0, 1))
+        perf_table.add_column("Metric", style="cyan")
+        perf_table.add_column("Value", justify="right", style="bold green")
 
-        # --- Token Usage ---
+        perf_table.add_row("TTFT", f"{self.TTFT:.2f}s")
+        perf_table.add_row("Prefill TPS", f"{self.prompt_TPS:.1f}")
+        perf_table.add_row("Generate TPS", f"{self.generation_TPS:.1f}")
+
+        perf_panel = Panel(perf_table,
+                           title="[bold cyan]⚡ Performance",
+                           border_style="cyan",
+                           expand=False)
+
+        # ---------------------------------------------------------
+        # Panel 2: Token Usage (Detailed)
+        # ---------------------------------------------------------
         total_tokens = self.total_input_token + self.total_output_token
-        table.add_row("[bold cyan]Token Usage[/bold cyan]", "")
-        table.add_row("  ↳ Input Tokens", str(self.total_input_token))
-        table.add_row("      • Estimate System Prompt",
-                      str(self.system_prompt_token),
-                      style="dim")
-        table.add_row("      • Estimate User Prompt",
-                      str(self.user_prompt_token),
-                      style="dim")
-        table.add_row("  ↳ Output Tokens", str(self.total_output_token))
-        table.add_row("      • Estimate Thinking",
-                      str(self.thinking_token),
-                      style="dim")
-        table.add_row("      • Estimate Content",
-                      str(self.content_token),
-                      style="dim")
-        table.add_row("  ↳ [bold]Total (Input + Output)[/bold]",
-                      f"[bold]{total_tokens}[/bold]")
 
-        table.add_section()
+        token_table = Table(box=None, show_header=False, padding=(0, 1))
+        token_table.add_column("Metric", style="white")
+        token_table.add_column("Value", justify="right", style="bold green")
 
-        # --- Context Window Usage ---
-        # Prevent division by zero just in case
-        usage_pct = (total_tokens / self.context_window) if getattr(
-            self, 'context_window', 0) else 0
-        table.add_row("[bold cyan]Context Window Usage[/bold cyan]", "")
-        table.add_row(
-            "  ↳ Used",
-            f"{total_tokens} / {self.context_window} ([yellow]{usage_pct:.1%}[/yellow])"
+        token_table.add_row("Input Tokens", str(self.total_input_token))
+        token_table.add_row(
+            " ↳ [dim]Sys/User[/dim]",
+            f"[dim]{self.system_prompt_token} / {self.user_prompt_token}[/dim]"
         )
+        token_table.add_row("Output Tokens", str(self.total_output_token))
+        token_table.add_row(
+            " ↳ [dim]Think/Text[/dim]",
+            f"[dim]{self.thinking_token} / {self.content_token}[/dim]")
+        token_table.add_row("[bold]Total[/bold]",
+                            f"[bold]{total_tokens}[/bold]")
 
-        # Print the final table
-        print()  # Add a little padding above the table
-        console.print(table)
+        token_panel = Panel(token_table,
+                            title="[bold magenta]🪙 Tokens",
+                            border_style="magenta",
+                            expand=False)
+
+        # ---------------------------------------------------------
+        # Panel 3: Context Window
+        # ---------------------------------------------------------
+        usage_pct = (total_tokens / ctx) if ctx else 0
+
+        ctx_table = Table(box=None, show_header=False, padding=(0, 1))
+        ctx_table.add_column("Metric", style="yellow")
+        ctx_table.add_column("Value", justify="right", style="bold green")
+
+        ctx_table.add_row("Window Size", str(ctx))
+        ctx_table.add_row("Used", str(total_tokens))
+        ctx_table.add_row("Percentage", f"([yellow]{usage_pct:.1%}[/yellow])")
+
+        ctx_panel = Panel(ctx_table,
+                          title="[bold yellow]📏 Context",
+                          border_style="yellow",
+                          expand=False)
+
+        # ---------------------------------------------------------
+        # Render Side-by-Side
+        # ---------------------------------------------------------
+        console.print()  # Add a little padding above
+
+        # Columns will automatically wrap them if your terminal is too narrow,
+        # but put them side-by-side on standard desktop terminals!
+        console.print(Columns([perf_panel, token_panel, ctx_panel],
+                              equal=True))
 
 
 class OllamaClient:
@@ -998,11 +1016,24 @@ def handle_common_commands(user_input: str, client, current_system: str = ""):
                 return {"status": "continue"}
         else:
             # If they just type /persona without a name, list the available options
-            print("\n\033[96m=== Available Personas ===\033[0m")
+            console.print(
+                "\n[bold cyan]=== Available Personas ===[/bold cyan]")
+
+            persona_panels = []
             for name, desc in PERSONAS.items():
-                # Print the name and a short preview of the prompt
-                preview = desc[:65] + "..." if len(desc) > 65 else desc
-                print(f"- \033[93m{name:<10}\033[0m : {preview}")
+                # We can allow slightly more text now since rich handles word-wrapping beautifully
+                preview = desc[:120] + "..." if len(desc) > 120 else desc
+
+                # Create a neat little card for each persona
+                panel = Panel(f"[white]{preview}[/white]",
+                              title=f"[bold yellow]{name}[/bold yellow]",
+                              border_style="cyan",
+                              padding=(0, 1))
+                persona_panels.append(panel)
+
+            # Print all panels grouped into responsive columns
+            console.print(Columns(persona_panels, equal=True))
+
             return {"status": "continue"}
 
     elif cmd == '/ctx':
@@ -1226,9 +1257,6 @@ def generate_completion_with_model(client, running_only=False):
 
         try:
             if client.stream:
-                from rich.live import Live
-                from rich.markdown import Markdown
-                from rich.spinner import Spinner
 
                 # 1. Initialize the Spinner object
                 loading_spinner = Spinner(
@@ -1239,7 +1267,7 @@ def generate_completion_with_model(client, running_only=False):
                           console=console,
                           refresh_per_second=15,
                           transient=True,
-                          vertical_overflow=TMUX_SAFE_OVERFLOW) as live:
+                          vertical_overflow="ellipsis") as live:
 
                     # 3. Send request to server inside Live so spinner plays
                     response = client.generate(model_name,
@@ -1260,8 +1288,16 @@ def generate_completion_with_model(client, running_only=False):
                             last_token_time = time.time()
                             full_response += content
 
-                            # Overwrite the Spinner with Live Markdown
-                            live.update(Markdown(full_response))
+                            # Truncate content display to terminal height to prevent tmux overflow
+                            max_lines = console.size.height - 4
+                            lines = full_response.splitlines()
+                            if len(lines) > max_lines:
+                                display_text = '\n'.join(lines[-max_lines:])
+                            else:
+                                display_text = full_response
+
+                            # Overwrite the Spinner with truncated Live Markdown
+                            live.update(Markdown(display_text), refresh=True)
 
                         # Capture final statistics from the last chunk
                         if chunk.get("done"):
@@ -1270,12 +1306,13 @@ def generate_completion_with_model(client, running_only=False):
                 # Calculate TTFT
                 if first_token_time is not None:
                     first_token_latency = first_token_time - start_time
+
+                # Print the final, full markdown response cleanly into standard scrollback
+                console.print(Markdown(full_response))
                 print()
 
             else:
                 # --- Non-Streaming Mode ---
-                from rich.markdown import Markdown
-
                 with console.status("[bold yellow]Generating response...",
                                     spinner="dots"):
                     response = client.generate(model_name,
@@ -1524,7 +1561,7 @@ def chat_with_model(client, running_only=False):
                           console=console,
                           refresh_per_second=15,
                           transient=True,
-                          vertical_overflow=TMUX_SAFE_OVERFLOW) as live:
+                          vertical_overflow="ellipsis") as live:
 
                     # Send request to server
                     response, messages = client.chat(model_name,
@@ -1553,9 +1590,20 @@ def chat_with_model(client, running_only=False):
                             thinking_response += thinking
                             full_response += thinking
 
-                            # Update live view with ONLY the thinking panel
+                            # Calculate safe height for thinking panel
+                            max_think_lines = console.size.height - 6
+
+                            # Truncate the thinking text for the LIVE display only
+                            think_lines = thinking_response.splitlines()
+                            if len(think_lines) > max_think_lines:
+                                display_think = "\n".join(
+                                    think_lines[-max_think_lines:])
+                            else:
+                                display_think = thinking_response
+
+                            # Update live view with ONLY the truncated thinking panel
                             live.update(
-                                Panel(thinking_response,
+                                Panel(display_think,
                                       title="🧠 Thinking",
                                       border_style="dim"))
 
@@ -1566,9 +1614,8 @@ def chat_with_model(client, running_only=False):
                                 first_token_time = time.time()
                                 first_token_received = True
 
-                            # *** THE FIX: The Transition State ***
                             if currently_thinking:
-                                # Lock the finalized thinking block into the terminal history
+                                # Lock the FINALIZED FULL thinking block into the terminal history
                                 live.console.print(
                                     Panel(thinking_response,
                                           title="🧠 Thinking Complete",
@@ -1583,8 +1630,15 @@ def chat_with_model(client, running_only=False):
                             content_response += content
                             full_response += content
 
-                            # Now ONLY render the markdown content in the Live display
-                            live.update(Markdown(content_response))
+                            # Truncate content display to terminal height to prevent tmux overflow
+                            max_lines = console.size.height - 4
+                            lines = content_response.splitlines()
+                            if len(lines) > max_lines:
+                                display_text = '\n'.join(lines[-max_lines:])
+                            else:
+                                display_text = content_response
+
+                            live.update(Markdown(display_text), refresh=True)
 
                         # --- 3. Track Token Statistics ---
                         if "eval_count" in chunk:
@@ -1603,6 +1657,9 @@ def chat_with_model(client, running_only=False):
 
                 if first_token_time is not None:
                     first_token_latency = first_token_time - start_time
+
+                # Print the final, full markdown response cleanly into standard scrollback
+                console.print(Markdown(content_response))
                 print()
 
             else:
