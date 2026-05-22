@@ -30,6 +30,11 @@ from tokenizers import Tokenizer
 from ollama_utils import (get_input_from_editor, preview_image_file,
                           preview_text_file, print_context_warning)
 
+# Detect if the user is running the script inside a tmux session
+# We use "ellipsis" for tmux to prevent scrollback corruption,
+# and "visible" for standard terminals to enable auto-scrolling.
+TMUX_SAFE_OVERFLOW = "ellipsis" if os.environ.get("TMUX") else "visible"
+
 # Initialize the global rich console
 console = Console()
 
@@ -1233,7 +1238,8 @@ def generate_completion_with_model(client, running_only=False):
                 with Live(loading_spinner,
                           console=console,
                           refresh_per_second=15,
-                          vertical_overflow="visible") as live:
+                          transient=True,
+                          vertical_overflow=TMUX_SAFE_OVERFLOW) as live:
 
                     # 3. Send request to server inside Live so spinner plays
                     response = client.generate(model_name,
@@ -1517,7 +1523,8 @@ def chat_with_model(client, running_only=False):
                 with Live(loading_spinner,
                           console=console,
                           refresh_per_second=15,
-                          vertical_overflow="visible") as live:
+                          transient=True,
+                          vertical_overflow=TMUX_SAFE_OVERFLOW) as live:
 
                     # Send request to server
                     response, messages = client.chat(model_name,
