@@ -33,7 +33,9 @@
 
 ### Vision
 
-- [X] Video narrator
+- [X] Video narrator (also support USB camera input)
+  - [X] Ollama
+  - [X] vLLM for better performance
 - [X] OCR w/ VLM w/ `glm-ocr`
 - [X] Object detection integrated VLM classification
   - Check my [CV_Application](https://github.com/JordanWu1997/CV_Application) Repo

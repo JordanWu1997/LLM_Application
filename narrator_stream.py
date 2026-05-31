@@ -396,6 +396,8 @@ def run_streaming_caption_pipeline(input_video_path,
 
     # Load video info
     cap = cv2.VideoCapture(input_video_path)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
     fps = cap.get(cv2.CAP_PROP_FPS)
     step = int(fps * infer_every_sec)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -545,7 +547,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     for input_video_path in args.input_video_paths:
-        input_video_path = int(input_video_path)
+        try:
+            input_video_path = int(input_video_path)
+        except ValueError:
+            pass
+
         if args.streaming:
             run_streaming_caption_pipeline(input_video_path,
                                            infer_every_sec=args.infer_interval,
