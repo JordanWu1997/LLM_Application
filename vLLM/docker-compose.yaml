@@ -1,0 +1,51 @@
+services:
+  vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vllm
+
+    # The exact equivalent of `-it` (Interactive + TTY)
+    stdin_open: true # -i
+    tty: true        # -t
+    # Clear out the vLLM Python entrypoint
+    entrypoint: [""]
+    # Set the idling command to keep container up
+    command: tail -f /dev/null
+
+    # Mandatory: Share host memory space to prevent PyTorch/vLLM crashes
+    ipc: host
+    ports:
+      - "8000:8000"
+
+    # Pass the USB camera to the container
+    devices:
+      - /dev/video0:/dev/video0
+
+    # Mount local folder to save output videos or text logs
+    volumes:
+      - .:/app
+      # Maps a local folder named '.hf_cache' to the container's cache path
+      - ./hf_cache:/root/.cache/huggingface
+      # --- X11 Forwarding Mounts ---
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${XAUTH_FILE}:/root/.Xauthority:rw
+
+    # Pass environment variables to the container
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/root/.cache/huggingface
+      # --- X11 Forwarding Variables ---
+      - DISPLAY=${DISPLAY}
+      - XAUTHORITY=/root/.Xauthority
+      # Disables the FlashInfer sampling backend to prevent the deadlock
+      - VLLM_USE_FLASHINFER=0
+
+    # GPU Configuration (Equivalent to --gpus all)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -2,3 +2,7 @@
 /data
 /output
 /__pycache__
+/vLLM/.env
+/vLLM/.bak
+/vLLM/hf_cache
+/vLLM/*.pt
