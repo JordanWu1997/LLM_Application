@@ -153,7 +153,18 @@ def parse_arguments():
 
     parser.add_argument("--mode",
                         type=str,
-                        choices=["person", "scene", "grid"],
+                        choices=[
+                            "person",
+                            "scene",
+                            "grid_1x2",
+                            "grid_1x3",
+                            "grid_2x1",
+                            "grid_2x2",
+                            "grid_2x3",
+                            "grid_3x1",
+                            "grid_3x2",
+                            "grid_3x3",
+                        ],
                         default="person",
                         help="The analysis mode to run.")
 
@@ -593,9 +604,10 @@ def main():
         detector = ROIWrapper([[0, 0, -1, -1]])
         instruction = "Describe this scene, the environment, and the overall atmosphere concisely in 4 to 7 words."
         # instruction = "以中文精準地描述畫面中發生的事"
-    elif args.mode == "grid":
+    elif args.mode.startswith("grid"):
+        rows, cols = map(int, args.mode.split('_')[-1].split('x'))
         # Divide the screen into 4 distinct quadrants
-        detector = GridSceneWrapper(rows=1, cols=3)
+        detector = GridSceneWrapper(rows=rows, cols=cols)
         instruction = "Describe the main object or activity happening specifically in this cropped region in 4 to 7 words."
         # instruction = "以中文精準地描述畫面中發生的事"
     else:  # YOLO "person"
