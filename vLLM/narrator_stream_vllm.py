@@ -158,6 +158,7 @@ def parse_arguments():
                         help="The analysis mode to run.")
 
     parser.add_argument(
+        "-i",
         "--instruction",
         type=str,
         default=None,
@@ -166,6 +167,7 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "-I",
         "--interval",
         type=int,
         default=30,
@@ -594,11 +596,12 @@ def main():
     elif args.mode == "grid":
         # Divide the screen into 4 distinct quadrants
         detector = GridSceneWrapper(rows=1, cols=3)
-        # instruction = "Describe the main object or activity happening specifically in this cropped region in 4 to 7 words."
-        instruction = "以中文精準地描述畫面中發生的事"
+        instruction = "Describe the main object or activity happening specifically in this cropped region in 4 to 7 words."
+        # instruction = "以中文精準地描述畫面中發生的事"
     else:  # YOLO "person"
         detector = YOLOTrackerWrapper(model_id='yolov8n-pose.pt', classes=[0])
         instruction = "Describe the actions or behavior of this person concisely in 4 to 7 words."
+        # instruction = "以中文描述畫面中人的行為"
 
     # User-defined instruction
     if args.instruction is not None:

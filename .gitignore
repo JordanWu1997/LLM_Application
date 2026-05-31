@@ -4,5 +4,7 @@
 /__pycache__
 /vLLM/.env
 /vLLM/.bak
+/vLLM/data
 /vLLM/hf_cache
+/vLLM/__pycache__
 /vLLM/*.pt
