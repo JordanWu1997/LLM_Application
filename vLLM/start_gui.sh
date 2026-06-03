@@ -12,7 +12,9 @@ chmod 777 $XAUTH_FILE
 # 2. Run Docker Compose
 # (Compose will automatically read the exported DISPLAY and XAUTH_FILE variables)
 echo "Starting pipeline via Docker Compose..."
-docker compose up -d --build
+
+docker compose build --no-cache
+docker compose up -d --force-recreate
 
 echo "--------------------------------------------------------"
 echo "Container is running in the background!"

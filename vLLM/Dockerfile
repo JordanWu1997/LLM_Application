@@ -24,7 +24,8 @@ RUN pip install --no-cache-dir \
     ultralytics \
     opencv-python \
     autoawq \
-    pillow
+    pillow \
+    openai
 
 # 5. Set the working directory inside the container
 WORKDIR /app
