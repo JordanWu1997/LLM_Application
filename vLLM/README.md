@@ -10,9 +10,22 @@
 
 ## Usage
 
-- Example Usage: Ask VLM to describe what you see in Chinese.
+### vLLM python
+
+- Ask VLM to describe what you see in Chinese.
   ```sh
   python narrator_stream_vllm.py 0 --mode scene --instruction "用中文回答你看到了什麼?"
+  ```
+
+## vLLM Server + vLLM Client
+
+1. Start vLLM server
+  1. Run `manage_internal_vllm.sh start` to start server
+  2. Run `manage_internal_vllm.sh logs` to check logs
+  2. After service is up, run `manage_internal_vllm.sh test` to check if server is running
+2. Run
+  ```sh
+  python narrator_stream_vllm_client.py 0 --mode scene --instruction "用中文回答你看到了什麼?"
   ```
 
 ## TODO
