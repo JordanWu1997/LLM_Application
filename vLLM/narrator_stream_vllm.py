@@ -120,10 +120,22 @@ class YOLOTrackerWrapper:
 
     def track(self, frame):
         # Native YOLO naturally returns a list of Results objects
-        return self.model.track(frame,
-                                persist=True,
-                                classes=self.classes,
-                                verbose=False)
+        return self.model.track(
+            frame,
+            persist=True,
+            classes=self.classes,
+            verbose=False,
+            # --- PERFORMANCE & LOW-LATENCY TRACKING OVERRIDES ---
+            # conf=0.45,  # Increase confidence threshold to skip faint/blurry detections
+            # iou=0.5,  # Standard NMS overlap filter
+            # tracker="bytetrack.yaml",  # ByteTRACK is faster than botsort.yaml (no camera motion compensation overhead) \
+            # half= True,  # Force FP16 precision inference for the YOLO model (huge speed boost on GPU)
+            # augment=False,  # Ensure test-time augmentation is off to keep it fast
+            # # --- DIRECT TRACKER STATE OVERRIDES ---
+            # track_buffer=5,     # Lower from 30 to 5. Drops lost tracks almost instantly instead of caching them.
+            # match_thresh=0.7,   # Higher value allows objects to bind/start tracking with less strict frame association.
+            # frame_rate=30       # Hardcodes the internal speed scale matrix to skip time-delta recalculations.
+        )
 
 
 def parse_arguments():
@@ -342,22 +354,32 @@ def qwen_worker_loop(vlm_model_id, task_instruction, sampling_params,
             inputs = []
             for img in crops:
                 # Qwen-VL specific chat template structure
-                chat = [{
-                    "role": "system",
-                    "content": "You are a highly analytical assistant."
-                }, {
-                    "role":
-                    "user",
-                    "content": [{
-                        "type": "image"
-                    }, {
-                        "type": "text",
-                        "text": task_instruction
-                    }]
-                }]
+                chat = [
+                    {
+                        "role":
+                        "system",
+                        # "content": "You are a highly analytical assistant."
+                        "content":
+                        "You are a concise assistant. Provide short, direct responses without any preamble or conversational filler."
+                    },
+                    {
+                        "role":
+                        "user",
+                        "content": [{
+                            "type": "image"
+                        }, {
+                            "type": "text",
+                            "text": task_instruction
+                        }]
+                    }
+                ]
 
                 prompt = processor.apply_chat_template(
-                    chat, tokenize=False, add_generation_prompt=True)
+                    chat,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False)
+
                 inputs.append({
                     "prompt": prompt,
                     "multi_modal_data": {
@@ -602,18 +624,18 @@ def main():
     print("Loading Detector ...")
     if args.mode == "scene":
         detector = ROIWrapper([[0, 0, -1, -1]])
-        instruction = "Describe this scene, the environment, and the overall atmosphere concisely in 4 to 7 words."
-        # instruction = "以中文精準地描述畫面中發生的事"
+        # instruction = "Describe this scene, the environment, and the overall atmosphere concisely in 4 to 7 words."
+        instruction = "以中文精準地描述畫面中發生的事"
     elif args.mode.startswith("grid"):
         rows, cols = map(int, args.mode.split('_')[-1].split('x'))
         # Divide the screen into 4 distinct quadrants
         detector = GridSceneWrapper(rows=rows, cols=cols)
-        instruction = "Describe the main object or activity happening specifically in this cropped region in 4 to 7 words."
-        # instruction = "以中文精準地描述畫面中發生的事"
+        # instruction = "Describe the main object or activity happening specifically in this cropped region in 4 to 7 words."
+        instruction = "以中文精準地描述畫面中發生的事"
     else:  # YOLO "person"
         detector = YOLOTrackerWrapper(model_id='yolov8n-pose.pt', classes=[0])
-        instruction = "Describe the actions or behavior of this person concisely in 4 to 7 words."
-        # instruction = "以中文描述畫面中人的行為"
+        # instruction = "Describe the actions or behavior of this person concisely in 4 to 7 words."
+        instruction = "以中文簡單概要畫面中人的行為"
 
     # User-defined instruction
     if args.instruction is not None:
@@ -625,7 +647,8 @@ def main():
         target_worker = gemma_worker_loop
         crop_resize_size = (336, 336)
     elif args.vlm_family == "qwen":
-        vlm_model_id = "Qwen/Qwen2.5-VL-3B-Instruct-AWQ"
+        # vlm_model_id = "Qwen/Qwen2.5-VL-3B-Instruct-AWQ"
+        vlm_model_id = "cyankiwi/Qwen3.5-4B-AWQ-4bit"
         target_worker = qwen_worker_loop
         crop_resize_size = (256, 256)
     else:
