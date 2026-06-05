@@ -32,8 +32,7 @@ vlm_ready_event = threading.Event()
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description=
-        "Real-time Human Behavior Analysis Pipeline (vLLM Client Client)")
+        description="Real-time Video Analysis Pipeline (vLLM Client)")
 
     parser.add_argument("input_video_path",
                         type=str,
@@ -81,6 +80,10 @@ def parse_arguments():
                         type=float,
                         default=1.0,
                         help="Scaling display ratio.")
+    parser.add_argument("--img_size",
+                        type=int,
+                        default=256,
+                        help="Thumbnail dimension (square) for VLM input.")
 
     return parser.parse_args()
 
@@ -177,8 +180,10 @@ def draw_bottom_wrapped_text(
         img,
         text,
         bbox,
-        font_size=18,
-        chinese_font_path="/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"):
+        font_size=30,
+        chinese_font_path="/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        reverse=False):
+
     x1, y1, x2, y2 = map(int, bbox)
     box_width = x2 - x1
     max_width = box_width - 10 if box_width > 20 else box_width
@@ -209,26 +214,54 @@ def draw_bottom_wrapped_text(
         line_height = font.getsize("测Test")[1]
 
     line_spacing = 4
-    total_text_height = len(lines) * line_height + (len(lines) -
-                                                    1) * line_spacing
+    total_text_height = len(lines) * line_height \
+            + (len(lines) - 1) * line_spacing
     vertical_padding = 6
     bg_height = total_text_height + (vertical_padding * 2)
-    bg_y1 = max(y1, y2 - bg_height)
 
-    overlay = img.copy()
-    cv2.rectangle(overlay, (x1, bg_y1), (x2, y2), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, 0.65, img, 0.35, 0, img)
+    if reverse:
 
-    img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    draw = ImageDraw.Draw(img_pil)
+        bg_y1 = y1
+        bg_y2 = min(y2, y1 + bg_height)
 
-    current_y = bg_y1 + vertical_padding
-    for line in lines:
-        if current_y > y2:
-            break
-        draw.text((x1 + 6, current_y + 1), line, font=font, fill=(0, 0, 0))
-        draw.text((x1 + 5, current_y), line, font=font, fill=(255, 255, 255))
-        current_y += line_height + line_spacing
+        overlay = img.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, bg_y2), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.65, img, 0.35, 0, img)
+
+        img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(img_pil)
+
+        current_y = bg_y1 + vertical_padding
+        for line in lines:
+            if current_y > y2:
+                break
+            draw.text((x1 + 6, current_y + 1), line, font=font, fill=(0, 0, 0))
+            draw.text((x1 + 5, current_y),
+                      line,
+                      font=font,
+                      fill=(255, 255, 255))
+            current_y += line_height + line_spacing
+
+    else:
+        bg_y1 = max(y1, y2 - bg_height)
+
+        overlay = img.copy()
+        cv2.rectangle(overlay, (x1, bg_y1), (x2, y2), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.65, img, 0.35, 0, img)
+
+        img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(img_pil)
+
+        current_y = bg_y1 + vertical_padding
+        for line in lines:
+            if current_y > y2:
+                break
+            draw.text((x1 + 6, current_y + 1), line, font=font, fill=(0, 0, 0))
+            draw.text((x1 + 5, current_y),
+                      line,
+                      font=font,
+                      fill=(255, 255, 255))
+            current_y += line_height + line_spacing
 
     np.copyto(img, cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR))
 
@@ -238,6 +271,8 @@ def process_video(video_path,
                   vlm_infer_frame_interval=30,
                   output_video_path=None,
                   crop_resize_size=None,
+                  font_size=18,
+                  text_loc='bottom',
                   display_ratio=1.0):
     try:
         cap = cv2.VideoCapture(int(video_path))
@@ -289,8 +324,9 @@ def process_video(video_path,
         except queue.Empty:
             pass
 
-        if frame_count % vlm_infer_frame_interval == 0 and vlm_input_queue.empty(
-        ):
+        if frame_count % vlm_infer_frame_interval == 0 \
+                and vlm_input_queue.empty():
+
             crops = []
             metadata = []
 
@@ -315,8 +351,8 @@ def process_video(video_path,
 
         for idx, box in enumerate(boxes):
             x1, y1, x2, y2 = map(int, box.xyxy[0])
-            track_id = int(
-                box.id[0].item()) if box.id is not None else f"temp_{idx}"
+            track_id = int(box.id[0].item()) \
+                    if box.id is not None else f"temp_{idx}"
 
             if track_id in active_animations:
                 anim = active_animations[track_id]
@@ -331,17 +367,23 @@ def process_video(video_path,
                     anim["current_text"] = full_text[:next_len]
                     anim["last_update"] = current_time
 
-                draw_bottom_wrapped_text(canvas, anim["current_text"],
-                                         [x1, y1, x2, y2])
+                draw_bottom_wrapped_text(
+                    canvas,
+                    anim["current_text"], [x1, y1, x2, y2],
+                    font_size=font_size,
+                    reverse=True if text_loc == 'top' else False)
             elif track_id in persistent_captions:
-                draw_bottom_wrapped_text(canvas, persistent_captions[track_id],
-                                         [x1, y1, x2, y2])
+                draw_bottom_wrapped_text(
+                    canvas,
+                    persistent_captions[track_id], [x1, y1, x2, y2],
+                    font_size=font_size,
+                    reverse=True if text_loc == 'top' else False)
 
         canvas = cv2.resize(canvas, (display_width, display_height))
         if output_video_writer is not None:
             output_video_writer.write(canvas)
 
-        cv2.imshow("Human Behavior Analysis", canvas)
+        cv2.imshow("Video Analysis Pipeline", canvas)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
@@ -362,19 +404,22 @@ def main():
         detector = ROIWrapper([[0, 0, -1, -1]])
         # instruction = "Describe this scene, the environment, and the overall atmosphere concisely in 4 to 7 words."
         instruction = "以中文精準地描述畫面中發生的事"
+        text_loc, font_size = 'top', 30
     elif args.mode.startswith("grid"):
         rows, cols = map(int, args.mode.split('_')[-1].split('x'))
         detector = GridSceneWrapper(rows=rows, cols=cols)
         instruction = "以中文精準地描述畫面中發生的事"
+        text_loc, font_size = 'top', 18
     else:
         detector = YOLOTrackerWrapper(model_id='yolov8n-pose.pt', classes=[0])
         instruction = "以中文簡單概要畫面中人的行為"
+        text_loc, font_size = 'top', 18
 
     if args.instruction is not None:
         instruction = args.instruction
 
     # Establish localized target constraints to prevent frame scaling payload bloat over network link
-    crop_resize_size = (256, 256)
+    crop_resize_size = (args.img_size, args.img_size)
 
     # Initialize client background worker loop
     worker_thread = threading.Thread(target=remote_vlm_client_loop,
@@ -392,7 +437,9 @@ def main():
                   vlm_infer_frame_interval=args.interval,
                   output_video_path=args.output_video_path,
                   display_ratio=args.display_ratio,
-                  crop_resize_size=crop_resize_size)
+                  crop_resize_size=crop_resize_size,
+                  font_size=font_size,
+                  text_loc=text_loc)
 
 
 if __name__ == "__main__":
