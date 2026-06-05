@@ -10,6 +10,18 @@
 
 ## Usage
 
+### Download Huggingface Model to Local and Load it to vLLM Server
+
+```sh
+model="<MODEL_DOWNLOADED_DIRECTORY>"
+
+export HF_HUB_OFFLINE=1
+
+python3 -m vllm.entrypoints.openai.api_server
+  --model "$model" \
+  ...
+```
+
 ### vLLM python
 
 - Ask VLM to describe what you see in Chinese.
