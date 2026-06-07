@@ -10,6 +10,8 @@ if [ -z "$1" ]; then
 fi
 
 MODEL_ID="$1"
+QUANT_FILTER="$2"
+
 # Extract just the model name for the folder (e.g., "Meta-Llama-3-8B")
 MODEL_NAME=${MODEL_ID##*/}
 # Target directory on your host machine
@@ -62,10 +64,21 @@ echo "🚀 Starting download for: $MODEL_ID"
 echo "📁 Destination: $DOWNLOAD_DIR"
 
 # 5. Execute Download using the new 'hf' CLI
-hf download "$MODEL_ID" \
-    --local-dir "$DOWNLOAD_DIR" \
-    --exclude "*.md" \
-    --exclude ".gitattributes"
+if [ -n "$QUANT_FILTER" ]; then
+    hf download "$MODEL_ID" \
+        --local-dir "$DOWNLOAD_DIR" \
+        --include "*$QUANT_FILTER*" \
+        --include "*.json" \
+        --include "*.txt" \
+        --exclude "*.md" \
+        --exclude ".gitattributes"
+else
+    # Fallback to downloading everything if no quantization argument is supplied
+    hf download "$MODEL_ID" \
+        --local-dir "$DOWNLOAD_DIR" \
+        --exclude "*.md" \
+        --exclude ".gitattributes"
+fi
 
 echo "======================================================="
 echo " ✅ Download Complete!"
