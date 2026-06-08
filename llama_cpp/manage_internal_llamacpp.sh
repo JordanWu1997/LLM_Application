@@ -19,7 +19,7 @@ print_usage() {
 }
 
 is_running() {
-    # 1. Primary check: Verify tracked file PID
+    # 1. Primary Check: Strict PID validation
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE")
         if ps -p "$pid" > /dev/null 2>&1; then
@@ -27,10 +27,9 @@ is_running() {
         fi
     fi
 
-    # 2. Resilient fallback check: Look for any running llama-server process
-    if pgrep -f "llama-server" > /dev/null 2>&1; then
-        # Dynamically repair and log the real process ID back into track file
-        pgrep -f "llama-server" | head -n 1 > "$PID_FILE"
+    # 2. Safe Fallback: pidof avoids matching this bash script's name
+    if pidof llama-server > /dev/null 2>&1; then
+        pidof llama-server | awk '{print $1}' > "$PID_FILE"
         return 0
     fi
 
@@ -38,39 +37,39 @@ is_running() {
 }
 
 stop_server() {
-    if is_running; then
-        local pids=$(pgrep -f "llama-server")
-        if [ -z "$pids" ] && [ -f "$PID_FILE" ]; then
-            pids=$(cat "$PID_FILE")
-        fi
+    echo "🔄 Stopping internal llama.cpp server..."
 
-        echo "🔄 Stopping internal llama.cpp server processes..."
-        for pid in $pids; do
-            kill -15 "$pid" 2>/dev/null
-        done
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE")
+        echo "   -> Sending graceful stop to strict PID: $pid"
+        kill -15 "$pid" 2>/dev/null
 
+        # Wait up to 15 seconds for mmap RAM to cleanly unmap
         for i in {1..15}; do
-            if ! pgrep -f "llama-server" > /dev/null 2>&1; then
+            if ! ps -p "$pid" > /dev/null 2>&1; then
+                echo "🛑 Server stopped cleanly. VRAM freed."
                 rm -f "$PID_FILE"
-                echo "🛑 llama.cpp server stopped cleanly. VRAM freed."
                 return 0
             fi
             sleep 1
         done
 
-        echo "⚠️  llama.cpp server didn't stop in time. Forcing termination..."
-        pgrep -f "llama-server" | xargs kill -9 2>/dev/null
+        echo "⚠️  Server taking too long. Forcing termination..."
+        kill -9 "$pid" 2>/dev/null
         rm -f "$PID_FILE"
-        echo "💀 llama.cpp server force killed."
+        echo "💀 Server completely terminated."
     else
-        echo "ℹ️  No active internal llama.cpp server process detected."
-        rm -f "$PID_FILE"
+        echo "ℹ️  No PID file found. Cleaning up stray processes..."
+        for stray in $(pidof llama-server); do
+            kill -9 "$stray" 2>/dev/null
+        done
+        echo "🛑 Cleaned up."
     fi
 }
 
 start_server() {
     if is_running; then
-        echo "⚠️  llama.cpp server is already running. Stop it first or run 'restart'."
+        echo "⚠️  llama.cpp server is already running. Stop it first."
         exit 0
     fi
 
@@ -79,16 +78,14 @@ start_server() {
     local ngl="${N_GPU_LAYERS:-$DEFAULT_NGL}"
     local batch="${BATCH_SIZE:-$DEFAULT_BATCH}"
 
-    echo "🚀 Launching internal llama-server in background..."
-    echo "📌 Model: $model"
-    echo "📌 Context: $ctx | GPU Layers: $ngl | MoE Offload: CPU"
+    echo "🚀 Launching internal llama-server..."
+
+    # Must run from /app to find shared libraries
+    cd /app || exit 1
 
     > "$LOG_FILE"
 
-    # Navigate to the app directory so it can find its shared libraries
-    cd /app || exit 1
-
-    # Run server background job with optimized MoE/Context flags
+    # Run in background
     ./llama-server \
         -m "$model" \
         -c "$ctx" \
@@ -102,25 +99,15 @@ start_server() {
         --port "$PORT" \
         > "$LOG_FILE" 2>&1 &
 
-    # Give process breathing room to allocate initial tensor memory
-    sleep 2.0
-
-    local real_pid=$(pgrep -f "llama-server" | head -n 1)
-    if [ -n "$real_pid" ]; then
-        echo "$real_pid" > "$PID_FILE"
-        echo "✅ Process tracked successfully with PID: $real_pid"
-    else
-        echo "⚠️  Process spawned, tracking file setup deferred to auto-discovery."
-    fi
+    # The magic bullet: Grab the exact PID of the last background command
+    local strict_pid=$!
+    echo "$strict_pid" > "$PID_FILE"
+    echo "✅ Process locked and tracked with strict PID: $strict_pid"
 }
 
 test_server() {
-    echo "======================================================="
-    echo " 🧪 Running Diagnostics on Internal llama.cpp Engine"
-    echo "======================================================="
-
     if ! is_running; then
-        echo "❌ Error: The llama-server background process is not running."
+        echo "❌ Error: The server is not running."
         exit 1
     fi
 
@@ -131,13 +118,11 @@ test_server() {
         echo "🟢 SUCCESS (HTTP 200)"
     else
         echo "🔴 FAILED (HTTP Status: $curl_status)"
-        echo "   The server might still be allocating KV cache. Check logs."
         exit 1
     fi
 
     echo "🧠 [Step 2/2] Submitting reasoning test payload..."
 
-    # Create a temporary python script to test the endpoint
     cat << 'EOF' > /tmp/llama_test.py
 import urllib.request
 import json
@@ -155,8 +140,6 @@ try:
     req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers)
     with urllib.request.urlopen(req) as response:
         result = json.loads(response.read().decode("utf-8"))
-
-        # Grab final content (ignoring reasoning channel for this quick test)
         content = result['choices'][0]['message']['content'].strip()
         print(f"   🎉 Inference Test Clear!")
         print(f"   🤖 Model Response: \"{content}\"")
@@ -171,13 +154,9 @@ EOF
     rm /tmp/llama_test.py
 
     if [ $test_result -eq 0 ]; then
-        echo "======================================================="
-        echo " 🟢 ALL TESTS PASSED! Server is healthy and responsive."
-        echo "======================================================="
+        echo "🟢 ALL TESTS PASSED! Server is healthy."
     else
-        echo "======================================================="
-        echo " ❌ DIAGNOSTICS FAILED! Look over your internal logs."
-        echo "======================================================="
+        echo "❌ DIAGNOSTICS FAILED!"
         exit 1
     fi
 }
