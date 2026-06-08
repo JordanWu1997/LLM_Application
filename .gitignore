@@ -9,3 +9,6 @@
 /vLLM/__pycache__
 /vLLM/*.pt
 /vLLM/output
+/RAG/env
+/RAG/chromadb
+/llama_cpp/models

@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  llamacpp:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llamacpp-server
+
+    # The exact equivalent of `-it` (Interactive + TTY)
+    stdin_open: true # -i
+    tty: true        # -t
+
+    # Mandatory: Share host memory space to prevent PyTorch/vLLM crashes
+    ipc: host
+    ports:
+      - "8081:8080"
+    volumes:
+      - .:/workplace
+    working_dir: /workplace
+
+    # GPU
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Clear out the vLLM Python entrypoint
+    entrypoint: [""]
+    # Set the idling command to keep container up
+    command: tail -f /dev/null
+
+    # Default command to start llamacpp server
+      #command: >
+      #  -m /app/models/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
+      #  -ngl 99
+      #  -ot "exps=CPU"
+      #  -c 32768
+      #  -b 1024
+      #  -fa on
+      #  --cache-type-k q8_0
+      #  --cache-type-v q8_0
+      #  --host 0.0.0.0
+      #  --port 8080
