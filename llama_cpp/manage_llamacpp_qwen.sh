@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 
-# Configurable defaults - pre-tuned for Gemma-4-26B with MoE RAM offloading
-DEFAULT_MODEL="/workplace/models/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf"
-DEFAULT_CTX=32768
-DEFAULT_NGL=99
-DEFAULT_BATCH=1024
+# Configurable defaults
+#DEFAULT_MODEL="/workplace/models/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ2_M.gguf"
+DEFAULT_MODEL="/workplace/models/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf"
+#DEFAULT_MMPROJ_MODEL="/workplace/models/mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-f16.gguf"
+#DEFAULT_CTX=131072
+DEFAULT_CTX=16392
+DEFAULT_NGL=999
 PORT=8080
 
 PID_FILE="/tmp/llamacpp_server.pid"
@@ -74,30 +76,50 @@ start_server() {
     fi
 
     local model="${MODEL:-$DEFAULT_MODEL}"
+    local mmproj_model="${MODEL:-$DEFAULT_MMPROJ_MODEL}"
     local ctx="${CTX_SIZE:-$DEFAULT_CTX}"
     local ngl="${N_GPU_LAYERS:-$DEFAULT_NGL}"
-    local batch="${BATCH_SIZE:-$DEFAULT_BATCH}"
 
     echo "🚀 Launching internal llama-server..."
 
     # Must run from /app to find shared libraries
     cd /app || exit 1
 
-    > "$LOG_FILE"
-
-    # Run in background
+    # Run in background (GPU: 3060 (vRAM 12GB) + MOE CPU offload)
+    # NOTE:
+    #   --n-cpu-moe layer_number: lower layer_number -> more GPU usage
+    #   --no-mmap: load model into memory instead of virtual mapping
+    #   --chat-template-kwargs '{"enable_thinking":true}': enable thinking
+    #   --chat-template-kwargs '{"enable_thinking":false}': disable thinking
+    #   --jinja: avoid template issue for new qwen model
     ./llama-server \
-        -m "$model" \
-        -c "$ctx" \
-        -ngl "$ngl" \
-        -b "$batch" \
-        -ot "exps=CPU" \
+        --model "$model" \
+        --mmproj "$mmproj_model" \
+        --n-gpu-layers "$ngl" \
+        --n-cpu-moe 30 \
+        --ctx-size "$ctx" \
+        --no-mmap \
+        --mlock \
         -fa on \
         --cache-type-k q8_0 \
         --cache-type-v q8_0 \
+        -n 8192 \
         --host 0.0.0.0 \
         --port "$PORT" \
+        --jinja \
+        --chat-template-kwargs '{"enable_thinking": false}' \
         > "$LOG_FILE" 2>&1 &
+
+    ## Run in background (GPU-only)
+    #./llama-server \
+        #--model "$model" \
+        #-ngl "$ngl" \
+        #--ctx-size "$ctx" \
+        #-n 8192 \
+        #--host 0.0.0.0 \
+        #--port "$PORT" \
+        #--jinja \
+        #> "$LOG_FILE" 2>&1 &
 
     # The magic bullet: Grab the exact PID of the last background command
     local strict_pid=$!
@@ -131,7 +153,7 @@ import sys
 url = "http://localhost:8080/v1/chat/completions"
 headers = {"Content-Type": "application/json"}
 data = {
-    "model": "gemma-4-26b",
+    "model": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
     "messages": [{"role": "user", "content": "What is 2+2? Reply with just the number."}],
     "max_tokens": 10
 }

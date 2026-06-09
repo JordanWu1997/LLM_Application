@@ -18,6 +18,16 @@
   curl http://localhost:<PORT>/props
   ```
 
+## `llama-server` Arguments Tuning
+
+- References
+  - https://www.koc.com.tw/archives/642193
+- Arguments
+  - `--n-cpu-moe <layer_number></layer_number>`: lower layer_number -> more GPU usage
+  - `--no-mmap`: load model into memory instead of virtual mapping
+  - `--chat-template-kwargs '{"enable_thinking":true}'`: enable thinking
+  - `--chat-template-kwargs '{"enable_thinking":false}'`: disable thinking
+
 ## Connect to running Open-WebUI
 
 - Admin Panel -> Connections -> OpenAI API

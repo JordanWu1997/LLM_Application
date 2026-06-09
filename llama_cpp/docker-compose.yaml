@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  llamacpp:
+  llamacpp-gemma:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
-    container_name: llamacpp-server
+    container_name: llamacpp-gemma4
 
     # The exact equivalent of `-it` (Interactive + TTY)
     stdin_open: true # -i
@@ -37,7 +37,6 @@ services:
       #  -ngl 99
       #  -ot "exps=CPU"
       #  -c 32768
-      #  -b 1024
       #  -fa on
       #  --cache-type-k q8_0
       #  --cache-type-v q8_0
