@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
-# Configurable defaults
-#DEFAULT_MODEL="/workplace/models/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf"
-DEFAULT_MODEL="/workplace/models/Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP/Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q2_K_P.gguf"
-DEFAULT_MMPROJ="/workplace/models/Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP/mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-f16.gguf"
+# Configurable defaults - pre-tuned for Gemma-4-26B with MoE RAM offloading
+DEFAULT_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/gemma-4-26B-A4B-it-UD-IQ2_M.gguf"
+DEFAULT_MMPROJ_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/mmproj-BF16.gguf"
+DEFAULT_DRAFT_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/mtp-gemma-4-26B-A4B-it.gguf"
 #DEFAULT_CTX=131072
-DEFAULT_CTX=16392
+DEFAULT_CTX=32768
+#DEFAULT_CTX=8192
 DEFAULT_NGL=999
 PORT=8080
 
@@ -77,6 +78,7 @@ start_server() {
 
     local model="${MODEL:-$DEFAULT_MODEL}"
     local mmproj_model="${MODEL:-$DEFAULT_MMPROJ_MODEL}"
+    local draft_model="${MODEL:-$DEFAULT_DRAFT_MODEL}"
     local ctx="${CTX_SIZE:-$DEFAULT_CTX}"
     local ngl="${N_GPU_LAYERS:-$DEFAULT_NGL}"
 
@@ -91,39 +93,24 @@ start_server() {
     #   --no-mmap: load model into memory instead of virtual mapping
     #   --chat-template-kwargs '{"enable_thinking":true}': enable thinking
     #   --chat-template-kwargs '{"enable_thinking":false}': disable thinking
-    #   --jinja: avoid template issue for new qwen model
-    #   --spec-type 'draft-mtp': Enable MTP
-    #   --spec-draft-n-max 2: Max token for MTP to predict
     ./llama-server \
         --model "$model" \
         --mmproj "$mmproj_model" \
-        --spec-type 'draft-mtp' \
-        --spec-draft-n-max 2 \
         --n-gpu-layers "$ngl" \
-        --n-cpu-moe 20 \
+        --n-cpu-moe 16 \
         --ctx-size "$ctx" \
+        --model-draft "$draft_model" \
+        --spec-type "draft-mtp" \
         --no-mmap \
         --mlock \
-        -fa on \
+        --flash-attn on \
         --cache-type-k q8_0 \
         --cache-type-v q8_0 \
         -n 8192 \
         --host 0.0.0.0 \
         --port "$PORT" \
-        --jinja \
         --chat-template-kwargs '{"enable_thinking": false}' \
         > "$LOG_FILE" 2>&1 &
-
-    ## Run in background (GPU-only)
-    #./llama-server \
-        #--model "$model" \
-        #-ngl "$ngl" \
-        #--ctx-size "$ctx" \
-        #-n 8192 \
-        #--host 0.0.0.0 \
-        #--port "$PORT" \
-        #--jinja \
-        #> "$LOG_FILE" 2>&1 &
 
     # The magic bullet: Grab the exact PID of the last background command
     local strict_pid=$!
@@ -157,7 +144,7 @@ import sys
 url = "http://localhost:8080/v1/chat/completions"
 headers = {"Content-Type": "application/json"}
 data = {
-    "model": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+    "model": "Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf",
     "messages": [{"role": "user", "content": "What is 2+2? Reply with just the number."}],
     "max_tokens": 10
 }

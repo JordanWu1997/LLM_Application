@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  llamacpp-gemma:
+  llamacpp-server:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
-    container_name: llamacpp-gemma4
+    container_name: llamacpp-server
 
     # The exact equivalent of `-it` (Interactive + TTY)
     stdin_open: true # -i
@@ -16,6 +16,12 @@ services:
     volumes:
       - .:/workplace
     working_dir: /workplace
+
+    # Mandatory ulimit setting for memory locking
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
 
     # GPU
     deploy:
