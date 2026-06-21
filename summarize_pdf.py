@@ -16,7 +16,7 @@ import pymupdf
 import requests
 from tqdm import tqdm
 
-from ollama_utils import check_args_connections
+from ollama_utils import check_args_connections, stream_ollama_chat
 
 # Global structure mapping to ensure consistency between CLI arguments and parsing indices
 STRUCT_KEYS = [
@@ -217,7 +217,8 @@ def summarize_arxiv_pdf(pdf_path,
                         selected_additional_sections=None,
                         ollama_url="http://localhost:11434",
                         model="gemma3:12b",
-                        context_window=4096,
+                        ctx_window=4096,
+                        section_max_char=12000,
                         stream=True,
                         verbose=False):
 
@@ -236,7 +237,8 @@ def summarize_arxiv_pdf(pdf_path,
     if selected_additional_sections is not None:
         prompt_body += "--- ADDITIONAL SECTIONS CHOSEN BY USER ---\n"
         for sec in selected_additional_sections:
-            truncated_section = sections[sec][:12000]
+            truncated_section = \
+                sections[sec][:min(section_max_char, len(sections[sec]))]
             prompt_body += f"\n### {sec}:\n{truncated_section}\n"
 
     prompt_body += (
@@ -245,84 +247,13 @@ def summarize_arxiv_pdf(pdf_path,
         f"based strictly on the metadata and structural textual blocks provided above."
     )
 
-    # Generate context
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                'role': 'user',
-                'content': prompt_body,
-            },
-        ],
-        "stream": True,
-        "options": {
-            "num_ctx": context_window,
-        }
-    }
+    full_response = stream_ollama_chat(prompt_body,
+                                       ollama_url=ollama_url,
+                                       model=model,
+                                       ctx_window=ctx_window,
+                                       verbose=True)
 
-    # Query ollama and Print
-    full_summary, final_metadata = "", None
-    try:
-        response = requests.post(f'{ollama_url}/api/chat',
-                                 json=payload,
-                                 stream=True)
-        response.raise_for_status()
-
-        if verbose:
-            print(f"\n[INFO] 🔍 Summarizing with {model}...\n" + "=" * 40)
-
-        for line in response.iter_lines():
-            if line:
-                chunk = json.loads(line)
-                if "message" in chunk and chunk["message"].get("content"):
-                    content = chunk['message']['content']
-                    full_summary += content
-                    if stream:
-                        print(content, end='', flush=True)
-                if chunk.get('done'):
-                    final_metadata = chunk
-
-        # --- Token Truncation Engine ---
-        prompt_tokens = final_metadata.get("prompt_eval_count", 0)
-        print()
-        if prompt_tokens >= context_window:
-            print(
-                f"\033[91m⚠️  CRITICAL: Paper metadata prompt was TRUNCATED.\033[0m"
-            )
-            print(
-                f"The input metadata context hit your threshold limit: {prompt_tokens}/{context_window} tokens."
-            )
-            print(
-                "Action: Consider expanding your execution --ctx values configuration.\n"
-            )
-        else:
-            if verbose:
-                print(
-                    f"\033[90m[Analysis complete. Context used: {prompt_tokens}/{context_window} tokens]\033[0m\n"
-                )
-
-    except requests.exceptions.RequestException as e:
-        print(f"[ERROR] ❌ API Connection Error: {e}")
-
-    # Ollama verbose
-    if final_metadata and verbose:
-        # Convert nanoseconds to seconds
-        total_sec = final_metadata.get('total_duration', 0) / 1e9
-        # Avoid div by zero
-        eval_sec = final_metadata.get('eval_duration', 1) / 1e9
-        prompt_tokens = final_metadata.get('prompt_eval_count', 0)
-        response_tokens = final_metadata.get('eval_count', 0)
-        # Calculate tokens per second
-        tokens_per_sec = response_tokens / eval_sec
-        # Print
-        print(f"\n\n{'-'*20} PERFORMANCE REPORT {'-'*20}")
-        print(f"• Tokens Generated:   {response_tokens}")
-        print(f"• Prompt Tokens:      {prompt_tokens}")
-        print(f"• Generation Speed:   {tokens_per_sec:.2f} tokens/s")
-        print(f"• Total Time:         {total_sec:.2f}s")
-        print(f"{'-'*60}\n")
-
-    return full_summary, title, authors, sections
+    return full_response, title, authors, sections
 
 
 def save_as_markdown(input_file_path,
@@ -357,6 +288,7 @@ date: {datetime_str}
 ---
 
 ## LLM Summary
+
 {summary}
 """
 
@@ -473,7 +405,7 @@ def main():
             selected_additional_sections=selected_additional_sections,
             ollama_url=f"http://{args.host}:{args.port}",
             model=args.model,
-            context_window=args.ctx,
+            ctx_window=args.ctx,
             verbose=args.verbose,
             stream=not args.no_stream)
 

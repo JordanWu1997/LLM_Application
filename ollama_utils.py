@@ -95,11 +95,38 @@ def check_args_connections(args):
     return args
 
 
+def print_context_warning(prompt_tokens, ctx_window):
+    """
+    Warn if prompt tokens are approaching or exceeding context window.
+    """
+    if not ctx_window or ctx_window <= 0:
+        return
+
+    usage_ratio = prompt_tokens / ctx_window
+    usage_percent = usage_ratio * 100
+
+    # Hard truncation warning
+    if prompt_tokens >= ctx_window:
+        print(f"\n\033[91m[WARNING] Input may be TRUNCATED "
+              f"({prompt_tokens}/{ctx_window} tokens, "
+              f"{usage_percent:.1f}% used)\033[0m")
+
+    # Near-limit warning
+    elif usage_ratio >= 0.90:
+        print(f"\n\033[93m[WARNING] Context window nearly full "
+              f"({prompt_tokens}/{ctx_window} tokens, "
+              f"{usage_percent:.1f}% used)\033[0m")
+
+
 def stream_ollama_generate(prompt,
+                           system_prompt=None,
                            ollama_url="http://localhost:11434",
                            model="gemma3:12b",
                            ctx_window=4096,
-                           verbose=False):
+                           verbose=True):
+
+    if system_prompt is not None:
+        prompt = f"{system_prompt}\n\n{prompt}"
 
     # Payload
     payload = {
@@ -112,33 +139,112 @@ def stream_ollama_generate(prompt,
         }
     }
 
-    full_response = ""
-    stats = {}
-    with requests.post(f"{ollama_url}/api/generate", json=payload,
-                       stream=True) as response:
-        for line in response.iter_lines():
-            if line:
-                chunk = json.loads(line)
-                if not chunk.get("done"):
-                    content = chunk.get("response", "")
-                    full_response += content
-                    if verbose:
-                        print(content, end="", flush=True)
-                else:
-                    stats = chunk
+    try:
+        full_response = ""
+        stats = {}
+        with requests.post(f"{ollama_url}/api/generate",
+                           json=payload,
+                           stream=True) as response:
 
-    # Performance Reporting
-    p_tokens = stats.get('prompt_eval_count', 0)
-    o_tokens = stats.get('eval_count', 0)
-    duration = stats.get('eval_duration', 1) / 1e9
-    if verbose:
-        print(
-            f"\n--- Stats: {p_tokens} token-in / {o_tokens} token-out | {o_tokens/duration:.1f} t/s ---"
-        )
-    # Prompt truncated alert
-    print_context_warning(prompt_tokens=p_tokens, ctx_window=ctx_window)
+            print(f"\n[INFO] 🤖 {model} streaming: ", end="", flush=True)
 
-    return full_response
+            for line in response.iter_lines():
+                if line:
+                    chunk = json.loads(line)
+                    if not chunk.get("done"):
+                        content = chunk.get("response", "")
+                        full_response += content
+                        if verbose:
+                            print(content, end="", flush=True)
+                    else:
+                        stats = chunk
+
+        # Performance Reporting
+        p_tokens = stats.get('prompt_eval_count', 0)
+        o_tokens = stats.get('eval_count', 0)
+        duration = stats.get('eval_duration', 1) / 1e9
+        if verbose:
+            print(
+                f"\n--- Stats: {p_tokens} token-in / {o_tokens} token-out | {o_tokens/duration:.1f} t/s ---"
+            )
+        # Prompt truncated alert
+        print_context_warning(prompt_tokens=p_tokens, ctx_window=ctx_window)
+
+        return full_response
+
+    except Exception as e:
+        print(f"\n[ERROR] ❌ API Error: {e}")
+        return ""
+
+
+def stream_ollama_chat(prompt,
+                       system_prompt=None,
+                       messages=[],
+                       ollama_url="http://localhost:11434",
+                       model="gemma3:12b",
+                       ctx_window=4096,
+                       verbose=True):
+
+    # History message, system prompt
+    if messages == []:
+        if system_prompt is not None:
+            messages.append({
+                "role": "system",
+                "content": system_prompt,
+            })
+
+    # User prompt
+    messages.append({
+        "role": "user",
+        "content": prompt,
+    })
+
+    # Payload
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "options": {
+            "temperature": 0.0,
+            "num_ctx": ctx_window,
+        },
+    }
+
+    try:
+        full_response = ""
+        stats = {}
+        with requests.post(f"{ollama_url}/api/chat", json=payload,
+                           stream=True) as response:
+
+            print(f"\n[INFO] 🤖 {model} streaming:", end="", flush=True)
+
+            for line in response.iter_lines():
+                if line:
+                    chunk = json.loads(line)
+                    if "message" in chunk and chunk["message"].get("content"):
+                        content = chunk['message']['content']
+                        full_response += content
+                        if verbose:
+                            print(content, end='', flush=True)
+                    if chunk.get('done'):
+                        stats = chunk
+
+        # Performance Reporting
+        p_tokens = stats.get('prompt_eval_count', 0)
+        o_tokens = stats.get('eval_count', 0)
+        duration = stats.get('eval_duration', 1) / 1e9
+        if verbose:
+            print(
+                f"\n--- Stats: {p_tokens} token-in / {o_tokens} token-out | {o_tokens/duration:.1f} t/s ---"
+            )
+        # Prompt truncated alert
+        print_context_warning(prompt_tokens=p_tokens, ctx_window=ctx_window)
+
+        return full_response
+
+    except Exception as e:
+        print(f"\n[ERROR] ❌ API Error: {e}")
+        return ""
 
 
 def get_input_from_editor(initial_text=""):
@@ -170,67 +276,6 @@ def get_input_from_editor(initial_text=""):
         # Always clean up the temporary file afterward
         if os.path.exists(tf_name):
             os.remove(tf_name)
-
-
-def print_context_warning(prompt_tokens, ctx_window):
-    """
-    Warn if prompt tokens are approaching or exceeding context window.
-    """
-    if not ctx_window or ctx_window <= 0:
-        return
-
-    usage_ratio = prompt_tokens / ctx_window
-    usage_percent = usage_ratio * 100
-
-    # Hard truncation warning
-    if prompt_tokens >= ctx_window:
-        print(f"\n\033[91m[WARNING] Input may be TRUNCATED "
-              f"({prompt_tokens}/{ctx_window} tokens, "
-              f"{usage_percent:.1f}% used)\033[0m")
-
-    # Near-limit warning
-    elif usage_ratio >= 0.90:
-        print(f"\n\033[93m[WARNING] Context window nearly full "
-              f"({prompt_tokens}/{ctx_window} tokens, "
-              f"{usage_percent:.1f}% used)\033[0m")
-
-
-if __name__ == "__main__":
-
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Argparse Template for ollama utils")
-    parser.add_argument(
-        "--host",
-        type=str,
-        default="localhost",
-        help=
-        "The hostname or IP address of the Ollama server (default: localhost)")
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=11434,
-        help=
-        "The port number the Ollama server is listening on (default: 11434)")
-    parser.add_argument("--model",
-                        default="gemma4:e4b-8k-gpu",
-                        help="Model name to use (default: gemma4:e4b-8k-gpu)")
-    parser.add_argument(
-        "--ctx",
-        type=int,
-        default=8192,
-        help=
-        "The size of the context window used to generate the next token (default: 8192)"
-    )
-    parser.add_argument("-v",
-                        "--verbose",
-                        action="store_true",
-                        help="Enable verbose mode")
-    args = parser.parse_args()
-
-    # Check if Ollama connection/model is available
-    check_args_connections(args)
 
 
 def preview_text_file(filepath):
@@ -284,6 +329,7 @@ def preview_image_file(filepath):
 
         try:
             from PIL import Image
+
             with Image.open(filepath) as img:
                 dimensions = f"{img.width} x {img.height} px"
                 image_format = img.format or image_format
@@ -352,3 +398,41 @@ def preview_image_file(filepath):
     except Exception as e:
         console.print(
             f"[bold red]❌ Error reading image {filepath}: {e}[/bold red]")
+
+
+if __name__ == "__main__":
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Argparse Template for ollama utils")
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="localhost",
+        help=
+        "The hostname or IP address of the Ollama server (default: localhost)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=11434,
+        help=
+        "The port number the Ollama server is listening on (default: 11434)")
+    parser.add_argument("--model",
+                        default="gemma4:e4b-8k-gpu",
+                        help="Model name to use (default: gemma4:e4b-8k-gpu)")
+    parser.add_argument(
+        "--ctx",
+        type=int,
+        default=8192,
+        help=
+        "The size of the context window used to generate the next token (default: 8192)"
+    )
+    parser.add_argument("-v",
+                        "--verbose",
+                        action="store_true",
+                        help="Enable verbose mode")
+    args = parser.parse_args()
+
+    # Check if Ollama connection/model is available
+    check_args_connections(args)

@@ -22,7 +22,8 @@ import tempfile
 
 import requests
 
-from ollama_utils import check_args_connections, print_context_warning
+from ollama_utils import (check_args_connections, print_context_warning,
+                          stream_ollama_generate)
 
 
 def get_git_diff():
@@ -31,56 +32,6 @@ def get_git_diff():
                                        text=True).strip()
     except Exception:
         return None
-
-
-def generate_streaming_commit(diff,
-                              ollama_url='http://localhost:11434',
-                              model="gemma4:e4b",
-                              context_window=4096):
-
-    system_prompt = "Write a concise Conventional Commit message. Output ONLY the message text."
-
-    payload = {
-        "model": model,
-        "prompt": f"{system_prompt}\n\nDiff:\n{diff}",
-        "stream": True,  # Enable streaming
-        "options": {
-            "num_ctx": context_window,
-            "temperature": 0
-        }
-    }
-
-    full_message = ""
-    try:
-        # Use stream=True in requests
-        response = requests.post(f'{ollama_url}/api/generate',
-                                 json=payload,
-                                 stream=True)
-        response.raise_for_status()
-
-        print("\n[INFO] 🤖 Generating: ", end="", flush=True)
-        for line in response.iter_lines():
-            if line:
-                chunk = json.loads(line)
-
-                # Check if the chunk has response text
-                if 'response' in chunk:
-                    text = chunk['response']
-                    print(text, end="", flush=True)
-                    full_message += text
-
-                # The last chunk contains the metadata
-                if chunk.get('done'):
-                    print("\n")
-                    prompt_tokens = chunk.get("prompt_eval_count", 0)
-                    print_context_warning(prompt_tokens=prompt_tokens,
-                                          ctx_window=context_window)
-
-        return full_message.strip()
-
-    except Exception as e:
-        print(f"\n[ERROR] ❌ API Error: {e}")
-        return ""
 
 
 def edit_message(initial_message):
@@ -138,11 +89,14 @@ if __name__ == "__main__":
         sys.exit("[ERROR] ❌ No changes staged. Run 'git add' first.")
 
     # Message
-    ai_message = generate_streaming_commit(
-        diff,
+    ai_message = stream_ollama_generate(
+        f'Diff:\n{diff}',
+        system_prompt=
+        "Write a concise Conventional Commit message. Output ONLY the message text.",
         ollama_url=f'http://{args.host}:{args.port}',
         model=args.model,
-        context_window=args.ctx)
+        ctx_window=args.ctx,
+        verbose=True)
     if not ai_message:
         sys.exit()
 

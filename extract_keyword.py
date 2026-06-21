@@ -21,7 +21,8 @@ import re
 import requests
 from tqdm import tqdm
 
-from ollama_utils import check_args_connections, print_context_warning
+from ollama_utils import (check_args_connections, print_context_warning,
+                          stream_ollama_generate)
 
 
 def get_existing_master_tags(filepath):
@@ -47,56 +48,6 @@ def get_current_file_tags(content):
         for t in tags:
             found_tags.append(t[0] or t[1])
     return list(set(found_tags))
-
-
-def call_ollama_streaming(prompt,
-                          phase_name,
-                          ollama_url="http://localhost:11434",
-                          model_name="gemma3:12b",
-                          ctx_window=4096,
-                          verbose=False):
-
-    # Payload
-    payload = {
-        "model": model_name,
-        "prompt": prompt,
-        "stream": True,
-        "options": {
-            "num_ctx": ctx_window,
-            "temperature": 0
-        }
-    }
-
-    if verbose:
-        print(f"\n>>> Phase: {phase_name}")
-    full_response = ""
-    stats = {}
-
-    with requests.post(f"{ollama_url}/api/generate", json=payload,
-                       stream=True) as response:
-        for line in response.iter_lines():
-            if line:
-                chunk = json.loads(line)
-                if not chunk.get("done"):
-                    content = chunk.get("response", "")
-                    full_response += content
-                    if verbose:
-                        print(content, end="", flush=True)
-                else:
-                    stats = chunk
-
-    # Performance Reporting
-    p_tokens = stats.get('prompt_eval_count', 0)
-    o_tokens = stats.get('eval_count', 0)
-    duration = stats.get('eval_duration', 1) / 1e9
-    if verbose:
-        print(
-            f"\n--- {phase_name} Stats: {p_tokens} token-in / {o_tokens} token-out | {o_tokens/duration:.1f} t/s ---"
-        )
-    # Prompt truncated alert
-    print_context_warning(prompt_tokens=p_tokens, ctx_window=ctx_window)
-
-    return full_response
 
 
 def update_note_in_place(input_note_path, tags, verbose=False):
@@ -154,7 +105,7 @@ def update_note_in_place(input_note_path, tags, verbose=False):
 def extract_md_file_keyword(input_md_file_path,
                             tag_file_path=None,
                             ollama_url="http://localhost:11434",
-                            model_name="gemma3:12b",
+                            model="gemma3:12b",
                             ctx_window=4096,
                             max_input_char=-1,
                             verbose=False,
@@ -177,16 +128,17 @@ def extract_md_file_keyword(input_md_file_path,
         f"Current tags in file: {', '.join(file_tags)}. "
         f"Return ONLY a comma-separated list.\n\nTEXT:\n{full_content[:max_input_char]}"
     )
-    raw_keywords = [
-        t.strip() for t in call_ollama_streaming(gen_prompt,
-                                                 "Extraction",
-                                                 ollama_url=ollama_url,
-                                                 model_name=model_name,
-                                                 ctx_window=ctx_window,
-                                                 verbose=verbose).split(',')
-    ]
+
+    print(f"\n>>> Phase: Extraction")
+    keyword_response = stream_ollama_generate(gen_prompt,
+                                              ollama_url=ollama_url,
+                                              model=model,
+                                              ctx_window=ctx_window,
+                                              verbose=verbose)
+    raw_keywords = [t.strip() for t in keyword_response.split(',')]
 
     # Reconcile & Abbreviate phase
+    print(f"\n>>> Phase: Abbreviation")
     all_known_tags = list(set(master_tags + file_tags))
     match_prompt = f"""
     TASK: Reconcile keywords with known tags and abbreviate.
@@ -199,12 +151,11 @@ def extract_md_file_keyword(input_md_file_path,
     3. Use abbreviations but do not overshorten (e.g., DO NOT shorten 'tool' -> 'tl')
     4. Return ONLY a comma-separated list of 3-8 tags.
     """
-    final_tags_str = call_ollama_streaming(match_prompt,
-                                           "Abbreviation",
-                                           ollama_url=ollama_url,
-                                           model_name=model_name,
-                                           ctx_window=ctx_window,
-                                           verbose=verbose)
+    final_tags_str = stream_ollama_generate(match_prompt,
+                                            ollama_url=ollama_url,
+                                            model=model,
+                                            ctx_window=ctx_window,
+                                            verbose=True)
 
     # Update markdown note in place
     if update_in_place:
@@ -271,7 +222,7 @@ if __name__ == '__main__':
             input_md_file_path,
             tag_file_path,
             ollama_url=f'http://{args.host}:{args.port}',
-            model_name=args.model,
+            model=args.model,
             ctx_window=args.ctx,
             verbose=True,
             update_in_place=not args.no_inplace)
