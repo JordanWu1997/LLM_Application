@@ -10,10 +10,12 @@
     - [X] w/ Texts
     - [X] w/ Images
     - [X] w/ Files (txt, csv, etc.)
-- [ ] Voice assistant
-  - [ ] STT Input
-  - [ ] TTS Output
-    - [ ] Integrate w/ `espeak` or TTS tools
+- [X] Voice assistant
+  - [X] STT Input
+  - [X] TTS Output
+    - [X] Integrate w/ `espeak` or TTS tools
+    - [X] Kokoro
+    - [X] Qwen-TTS
 
 ### Text
 
@@ -30,6 +32,7 @@
   - [X] Error fixer
 - [ ] SQL assistant
 - [ ] Note/Diary organizer
+  - [ ] LLM Wiki
 
 ### Vision
 
@@ -38,7 +41,7 @@
   - [X] vLLM for better performance
 - [X] OCR w/ VLM w/ `glm-ocr`
 - [X] Object detection integrated VLM classification
-  - Check my [CV_Application](https://github.com/JordanWu1997/CV_Application) Repo
+  - Check my repo: [CV_Application](https://github.com/JordanWu1997/CV_Application)
 - [ ] Media tagger
 
 ## RAG List
@@ -47,8 +50,12 @@
 
 ## Agent List
 
+- [X] Hermes Agent
+  - [X] Personal Assistant
+  - [X] Connect to Discord
+  - [X] Connect to Google Workplace
 - [ ] OpenClaw
-  - Personal assistant
+  - [ ] Task Worker
 - [ ] Agentic Coding
   - [ ] Planer
   - [ ] Code builder
