@@ -123,6 +123,7 @@ def stream_ollama_generate(prompt,
                            ollama_url="http://localhost:11434",
                            model="gemma3:12b",
                            ctx_window=4096,
+                           temperature=0.1,
                            verbose=True):
 
     if system_prompt is not None:
@@ -135,7 +136,7 @@ def stream_ollama_generate(prompt,
         "stream": True,
         "options": {
             "num_ctx": ctx_window,
-            "temperature": 0
+            "temperature": temperature
         }
     }
 
@@ -146,7 +147,7 @@ def stream_ollama_generate(prompt,
                            json=payload,
                            stream=True) as response:
 
-            print(f"\n[INFO] 🤖 {model} streaming: ", end="", flush=True)
+            print(f"\n[INFO] 🤖 {model} streaming:\n", end="", flush=True)
 
             for line in response.iter_lines():
                 if line:
@@ -183,6 +184,7 @@ def stream_ollama_chat(prompt,
                        ollama_url="http://localhost:11434",
                        model="gemma3:12b",
                        ctx_window=4096,
+                       temperature=0.1,
                        verbose=True):
 
     # History message, system prompt
@@ -205,7 +207,7 @@ def stream_ollama_chat(prompt,
         "messages": messages,
         "stream": True,
         "options": {
-            "temperature": 0.0,
+            "temperature": temperature,
             "num_ctx": ctx_window,
         },
     }
@@ -216,7 +218,7 @@ def stream_ollama_chat(prompt,
         with requests.post(f"{ollama_url}/api/chat", json=payload,
                            stream=True) as response:
 
-            print(f"\n[INFO] 🤖 {model} streaming:", end="", flush=True)
+            print(f"\n[INFO] 🤖 {model} streaming:\n", end="", flush=True)
 
             for line in response.iter_lines():
                 if line:

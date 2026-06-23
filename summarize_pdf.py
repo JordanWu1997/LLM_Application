@@ -245,6 +245,7 @@ def summarize_arxiv_pdf(pdf_path,
         f"\nInstructions:\n"
         f"Please provide a cohesive, structured, and informative summary of this paper "
         f"based strictly on the metadata and structural textual blocks provided above."
+        f"Provide both English version and Chinese (traditional Chinese) version."
     )
 
     full_response = stream_ollama_chat(prompt_body,
@@ -263,6 +264,7 @@ def save_as_markdown(input_file_path,
                      sections,
                      chosen_sections=[],
                      output_folder="./output"):
+
     os.makedirs(output_folder, exist_ok=True)
 
     filename = os.path.basename(input_file_path)
@@ -314,8 +316,8 @@ def main():
         "--output",
         dest="output_md_dir",
         default="./output",
-        help=
-        "Path to save the generated Markdown summaries (default: ./summaries)")
+        help="Path to save the generated Markdown summaries (default: ./output)"
+    )
     # Fully detailed section definitions inside the argument configuration
     parser.add_argument(
         "-s",
