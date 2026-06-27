@@ -22,6 +22,7 @@ import tempfile
 
 import requests
 
+from llamacpp_utils import stream_llamacpp_chat, stream_llamacpp_generate
 from ollama_utils import (check_args_connections, print_context_warning,
                           stream_ollama_generate)
 
@@ -71,6 +72,10 @@ if __name__ == "__main__":
     parser.add_argument("--model",
                         default="gemma4:e4b-8k-gpu",
                         help="Model name to use (default: gemma4:e4b-8k-gpu)")
+    parser.add_argument("--engine",
+                        choices=['ollama', 'llamacpp'],
+                        default='ollama',
+                        help="LLM Engine")
     parser.add_argument(
         "--ctx",
         type=int,
@@ -81,22 +86,33 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Check if Ollama connection/model is available
-    args = check_args_connections(args)
+    if args.engine == 'ollama':
+        args = check_args_connections(args)
 
     # Git diff
     diff = get_git_diff()
     if not diff:
         sys.exit("[ERROR] ❌ No changes staged. Run 'git add' first.")
 
+    prompt = f'Diff:\n{diff}'
+    system_prompt = "Write a concise Conventional Commit message. Output ONLY the message text.",
+
     # Message
-    ai_message = stream_ollama_generate(
-        f'Diff:\n{diff}',
-        system_prompt=
-        "Write a concise Conventional Commit message. Output ONLY the message text.",
-        ollama_url=f'http://{args.host}:{args.port}',
-        model=args.model,
-        ctx_window=args.ctx,
-        verbose=True)
+    if args.engine == 'ollama':
+        ai_message = stream_ollama_generate(
+            prompt,
+            system_prompt=system_prompt,
+            ollama_url=f'http://{args.host}:{args.port}',
+            model=args.model,
+            ctx_window=args.ctx,
+            verbose=True)
+    else:
+        ai_message = stream_llamacpp_chat(
+            prompt,
+            system_prompt=system_prompt,
+            llamacpp_url=f'http://{args.host}:{args.port}',
+            ctx_window=args.ctx,
+            verbose=True)
     if not ai_message:
         sys.exit()
 
