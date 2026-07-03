@@ -16,6 +16,7 @@ import pymupdf
 import requests
 from tqdm import tqdm
 
+from llamacpp_utils import stream_llamacpp_chat, stream_llamacpp_generate
 from ollama_utils import check_args_connections, stream_ollama_chat
 
 # Global structure mapping to ensure consistency between CLI arguments and parsing indices
@@ -217,6 +218,7 @@ def summarize_arxiv_pdf(pdf_path,
                         selected_additional_sections=None,
                         ollama_url="http://localhost:11434",
                         model="gemma3:12b",
+                        engine="ollama",
                         ctx_window=4096,
                         section_max_char=12000,
                         stream=True,
@@ -248,11 +250,17 @@ def summarize_arxiv_pdf(pdf_path,
         f"Provide both English version and Chinese (traditional Chinese) version."
     )
 
-    full_response = stream_ollama_chat(prompt_body,
-                                       ollama_url=ollama_url,
-                                       model=model,
-                                       ctx_window=ctx_window,
-                                       verbose=True)
+    if engine == 'ollama':
+        full_response = stream_ollama_chat(prompt_body,
+                                           ollama_url=ollama_url,
+                                           model=model,
+                                           ctx_window=ctx_window,
+                                           verbose=True)
+    else:
+        full_response = stream_llamacpp_chat(prompt_body,
+                                             llamacpp_url=ollama_url,
+                                             ctx_window=ctx_window,
+                                             verbose=True)
 
     return full_response, title, authors, sections
 
@@ -364,6 +372,10 @@ def main():
         "--model",
         default="gemma4:e4b-8k-gpu",
         help="Model name to deploy (default: gemma4:e4b-8k-gpu)")
+    parser.add_argument("--engine",
+                        choices=['ollama', 'llamacpp'],
+                        default='ollama',
+                        help="LLM Engine")
     parser.add_argument(
         "--ctx",
         type=int,
@@ -374,7 +386,8 @@ def main():
     args = parser.parse_args()
 
     # Check if Ollama connection/model is available
-    check_args_connections(args)
+    if args.engine == 'ollama':
+        args = check_args_connections(args)
 
     # Find pdf file paths
     print(f"[INFO] 📋 Academic PDF Structural Extraction Engine")
@@ -407,6 +420,7 @@ def main():
             selected_additional_sections=selected_additional_sections,
             ollama_url=f"http://{args.host}:{args.port}",
             model=args.model,
+            engine=args.engine,
             ctx_window=args.ctx,
             verbose=args.verbose,
             stream=not args.no_stream)

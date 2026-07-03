@@ -53,6 +53,10 @@
 
 ## Agent List
 
+- [X] Tool Use
+  - [X] Weather
+  - [ ] News
+  - [ ] Web Search
 - [X] Hermes Agent
   - [X] Personal Assistant
   - [X] Connect to Discord
