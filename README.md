@@ -34,6 +34,8 @@
 - [ ] SQL assistant
 - [ ] Note/Diary organizer
   - [ ] LLM Wiki
+- [ ] Youtube transcript
+- [ ] Thought shifter
 
 ### Vision
 
