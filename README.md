@@ -35,6 +35,8 @@
 - [ ] Note/Diary organizer
   - [ ] LLM Wiki
       - Here I just use hermes-agent built-in LLM Wiki skill
+- [ ] Youtube transcript
+- [ ] Thought shifter
 
 ### Vision
 
@@ -49,6 +51,7 @@
 ## RAG
 
 - [ ] Knowledge Graph for [My Personal knowledge](https://github.com/JordanWu1997/Knowledge_Base)
+- [ ] LightRAG Exercise [LightRAG](https://github.com/hkuds/lightrag)
 
 ## Agent List
 
