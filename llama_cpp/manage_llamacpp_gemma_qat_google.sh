@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 
 # Configurable defaults - pre-tuned for Gemma-4-26B with MoE RAM offloading
-
-#DEFAULT_MODEL="/workplace/models/Meta-Llama-3-8B-Instruct-Q4/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"
-#DEFAULT_MODEL="workplace/models/Meta-Llama-3.2-Q4/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
-DEFAULT_MODEL="/workplace/models/Meta-Llama-3.2-Q4/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
-DEFAULT_CTX=8192
+DEFAULT_MODEL="/workplace/models/Gemma4-12B-Q4-Google/gemma-4-12b-it-qat-q4_0.gguf"
+DEFAULT_MMPROJ_MODEL="/workplace/models/Gemma4-12B-Q4-Google/mmproj-gemma-4-12b-it-qat-q4_0.gguf"
+DEFAULT_DRAFT_MODEL="/workplace/models/Gemma4-12B-Q4-Google/gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf"
+#DEFAULT_CTX=32768
+DEFAULT_CTX=131072
 DEFAULT_NGL=999
-#DEFAULT_NGL=0
 PORT=8083
 
 PID_FILE="/tmp/llamacpp_server.pid"
@@ -77,6 +76,8 @@ start_server() {
     fi
 
     local model="${MODEL:-$DEFAULT_MODEL}"
+    local mmproj_model="${MODEL:-$DEFAULT_MMPROJ_MODEL}"
+    local draft_model="${MODEL:-$DEFAULT_DRAFT_MODEL}"
     local ctx="${CTX_SIZE:-$DEFAULT_CTX}"
     local ngl="${N_GPU_LAYERS:-$DEFAULT_NGL}"
 
@@ -91,18 +92,23 @@ start_server() {
     #   --no-mmap: load model into memory instead of virtual mapping
     #   --chat-template-kwargs '{"enable_thinking":true}': enable thinking
     #   --chat-template-kwargs '{"enable_thinking":false}': disable thinking
+        #--mlock \
     ./llama-server \
         --model "$model" \
+        --mmproj "$mmproj_model" \
         --n-gpu-layers "$ngl" \
         --ctx-size "$ctx" \
+        --model-draft "$draft_model" \
+        --spec-type draft-mtp \
+        --spec-draft-n-max 4 \
         --no-mmap \
-        --mlock \
         --flash-attn on \
         --cache-type-k q8_0 \
         --cache-type-v q8_0 \
         -n 8192 \
         --host 0.0.0.0 \
         --port "$PORT" \
+        --chat-template-kwargs '{"enable_thinking": false}' \
         > "$LOG_FILE" 2>&1 &
 
     # The magic bullet: Grab the exact PID of the last background command

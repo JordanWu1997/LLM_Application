@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 
 # Configurable defaults - pre-tuned for Gemma-4-26B with MoE RAM offloading
-DEFAULT_MODEL="/workplace/models/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf"
-DEFAULT_CTX=32768
+#DEFAULT_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/gemma-4-26B-A4B-it-UD-IQ2_M.gguf"
+DEFAULT_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"
+DEFAULT_MMPROJ_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/mmproj-BF16.gguf"
+#DEFAULT_DRAFT_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/mtp-gemma-4-26B-A4B-it-Q8_0.gguf"
+DEFAULT_DRAFT_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/mtp-gemma-4-26B-A4B-it-Q4_0.gguf"
+DEFAULT_CTX=131072
 DEFAULT_NGL=999
-PORT=8080
+PORT=8081
 
 PID_FILE="/tmp/llamacpp_server.pid"
 LOG_FILE="/tmp/llamacpp_server.log"
@@ -73,6 +77,8 @@ start_server() {
     fi
 
     local model="${MODEL:-$DEFAULT_MODEL}"
+    local mmproj_model="${MODEL:-$DEFAULT_MMPROJ_MODEL}"
+    local draft_model="${MODEL:-$DEFAULT_DRAFT_MODEL}"
     local ctx="${CTX_SIZE:-$DEFAULT_CTX}"
     local ngl="${N_GPU_LAYERS:-$DEFAULT_NGL}"
 
@@ -87,20 +93,39 @@ start_server() {
     #   --no-mmap: load model into memory instead of virtual mapping
     #   --chat-template-kwargs '{"enable_thinking":true}': enable thinking
     #   --chat-template-kwargs '{"enable_thinking":false}': disable thinking
+
+        #--mlock \
+        #--chat-template-kwargs '{"enable_thinking": false}' \
+        #--n-cpu-moe 8 \ # for IQ2_M
     ./llama-server \
+        --alias local-llamacpp \
         --model "$model" \
-        --n-gpu-layers "$ngl" \
+        --mmproj "$mmproj_model" \
+        --no-mmproj-offload \
+        --n-gpu-layers 999 \
         --n-cpu-moe 20 \
         --ctx-size "$ctx" \
-        --no-mmap \
-        --mlock \
+        --model-draft "$draft_model" \
+        --spec-type "draft-mtp" \
+        --spec-draft-n-max 2 \
+        --spec-draft-n-min 0 \
+        --spec-draft-p-min 0.35 \
+        --parallel 1 \
+        -b 4096 \
+        -ub 4096 \
+        -t 6 \
+        -tb 12 \
         --flash-attn on \
-        --cache-type-k q8_0 \
-        --cache-type-v q8_0 \
+        --no-mmap \
+        --cache-type-k q4_0 \
+        --cache-type-v q4_0 \
+        --cache-type-k-draft q4_0 \
+        --cache-type-v-draft q4_0 \
         -n 8192 \
+        --reasoning-budget 4096 \
         --host 0.0.0.0 \
         --port "$PORT" \
-        --chat-template-kwargs '{"enable_thinking": false}' \
+        --jinja \
         > "$LOG_FILE" 2>&1 &
 
     # The magic bullet: Grab the exact PID of the last background command

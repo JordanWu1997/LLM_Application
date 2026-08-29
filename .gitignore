@@ -2,6 +2,7 @@
 /data
 /output
 /__pycache__
+
 /vLLM/.env
 /vLLM/.bak
 /vLLM/data
@@ -9,6 +10,16 @@
 /vLLM/__pycache__
 /vLLM/*.pt
 /vLLM/output
+
 /RAG/env
 /RAG/chromadb
+
 /llama_cpp/models
+/llama_cpp/perplexity
+
+/live-vlm-webui
+
+/llm_lab/anythingllm
+/llm_lab/open-webui
+/llm_lab/ollama
+/llm_lab/pytorch

@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 
-# Configurable defaults - pre-tuned for Gemma-4-26B with MoE RAM offloading
-DEFAULT_MODEL="/workplace/models/granite-4.1-3b-Q8/granite-4.1-3b-Q8_0.gguf"
-DEFAULT_CTX=16384
-#DEFAULT_NGL=999
-DEFAULT_NGL=0
-PORT=8080
+# Configurable defaults - pre-tuned for Qwen-0.6B-Embed inside a 1.5GB VRAM ceiling
+DEFAULT_MODEL="/workplace/models/Qwen3-Reranker-0.6B-GGUF-Voodisss-Q8/Qwen3-Reranker-0.6B.Q8_0.gguf"
+DEFAULT_CTX=2048          # 4096 is the sweet spot for 1.5GB VRAM (8192 risks OOM on long batches)
+DEFAULT_BATCH=1024        # Max tokens processed in logical sequence
+DEFAULT_UBATCH=256        # Physical VRAM compute chunk-size (Keeps VRAM spikes flat)
+DEFAULT_NGL=999           # 100% GPU offload (Model is ~600MB, fits easily)
+PORT=8083
 
-PID_FILE="/tmp/llamacpp_server.pid"
-LOG_FILE="/tmp/llamacpp_server.log"
+PID_FILE="/tmp/llamacpp_embed_server.pid"
+LOG_FILE="/tmp/llamacpp_embed_server.log"
 
 print_usage() {
     echo "======================================================="
-    echo " 🦙 Internal llama.cpp Process Controller"
+    echo " 📐 Internal llama.cpp Reranking Controller"
     echo "======================================================="
     echo "Usage: $0 [start | stop | restart | status | logs | test]"
     echo "======================================================="
 }
 
 is_running() {
-    # 1. Primary Check: Strict PID validation
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE")
         if ps -p "$pid" > /dev/null 2>&1; then
@@ -27,9 +27,10 @@ is_running() {
         fi
     fi
 
-    # 2. Safe Fallback: pidof avoids matching this bash script's name
-    if pidof llama-server > /dev/null 2>&1; then
-        pidof llama-server | awk '{print $1}' > "$PID_FILE"
+    # Port-specific check to avoid grabbing your Gemma chat server's PID
+    local stray_pid=$(pgrep -f "llama-server.*--port $PORT")
+    if [ -n "$stray_pid" ]; then
+        echo "$stray_pid" > "$PID_FILE"
         return 0
     fi
 
@@ -37,15 +38,14 @@ is_running() {
 }
 
 stop_server() {
-    echo "🔄 Stopping internal llama.cpp server..."
+    echo "🔄 Stopping internal Reranking server..."
 
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE")
         echo "   -> Sending graceful stop to strict PID: $pid"
         kill -15 "$pid" 2>/dev/null
 
-        # Wait up to 15 seconds for mmap RAM to cleanly unmap
-        for i in {1..15}; do
+        for i in {1..10}; do
             if ! ps -p "$pid" > /dev/null 2>&1; then
                 echo "🛑 Server stopped cleanly. VRAM freed."
                 rm -f "$PID_FILE"
@@ -59,17 +59,20 @@ stop_server() {
         rm -f "$PID_FILE"
         echo "💀 Server completely terminated."
     else
-        echo "ℹ️  No PID file found. Cleaning up stray processes..."
-        for stray in $(pidof llama-server); do
+        echo "ℹ️  No PID file found. Checking for orphaned process on port $PORT..."
+        local stray=$(pgrep -f "llama-server.*--port $PORT")
+        if [ -n "$stray" ]; then
             kill -9 "$stray" 2>/dev/null
-        done
-        echo "🛑 Cleaned up."
+            echo "🛑 Orphaned embedding server killed."
+        else
+            echo "ℹ️  Nothing to clean up."
+        fi
     fi
 }
 
 start_server() {
     if is_running; then
-        echo "⚠️  llama.cpp server is already running. Stop it first."
+        echo "⚠️  Reranking server is already running. Stop it first."
         exit 0
     fi
 
@@ -77,32 +80,25 @@ start_server() {
     local ctx="${CTX_SIZE:-$DEFAULT_CTX}"
     local ngl="${N_GPU_LAYERS:-$DEFAULT_NGL}"
 
-    echo "🚀 Launching internal llama-server..."
+    echo "🚀 Launching internal llama-server (Reranking Mode)..."
 
-    # Must run from /app to find shared libraries
     cd /app || exit 1
 
-    # Run in background (GPU: 3060 (vRAM 12GB) + MOE CPU offload)
-    # NOTE:
-    #   --n-cpu-moe layer_number: lower layer_number -> more GPU usage
-    #   --no-mmap: load model into memory instead of virtual mapping
-    #   --chat-template-kwargs '{"enable_thinking":true}': enable thinking
-    #   --chat-template-kwargs '{"enable_thinking":false}': disable thinking
     ./llama-server \
         --model "$model" \
+        --reranking \
         --n-gpu-layers "$ngl" \
         --ctx-size "$ctx" \
-        --no-mmap \
-        --mlock \
-        --flash-attn on \
+        --batch-size "$DEFAULT_BATCH" \
+        --ubatch-size "$DEFAULT_UBATCH" \
         --cache-type-k q8_0 \
         --cache-type-v q8_0 \
-        -n 16384 \
+        --cache-ram 0 \
+        --flash-attn on \
         --host 0.0.0.0 \
         --port "$PORT" \
         > "$LOG_FILE" 2>&1 &
 
-    # The magic bullet: Grab the exact PID of the last background command
     local strict_pid=$!
     echo "$strict_pid" > "$PID_FILE"
     echo "✅ Process locked and tracked with strict PID: $strict_pid"
@@ -110,7 +106,7 @@ start_server() {
 
 test_server() {
     if ! is_running; then
-        echo "❌ Error: The server is not running."
+        echo "❌ Error: The embedding server is not running."
         exit 1
     fi
 
@@ -124,40 +120,41 @@ test_server() {
         exit 1
     fi
 
-    echo "🧠 [Step 2/2] Submitting reasoning test payload..."
+    echo "🧠 [Step 2/2] Submitting vector tensor test payload..."
 
-    cat << 'EOF' > /tmp/llama_test.py
+    cat << 'EOF' > /tmp/embed_test.py
 import urllib.request
 import json
 import sys
 
-url = "http://localhost:8080/v1/chat/completions"
+url = f"http://localhost:{sys.argv[1]}/v1/embeddings"
 headers = {"Content-Type": "application/json"}
-data = {
-    "model": "Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf",
-    "messages": [{"role": "user", "content": "What is 2+2? Reply with just the number."}],
-    "max_tokens": 10
+payload = {
+    "model": "qwen3-embedding",
+    "input": "The quick brown fox jumps over the lazy dog."
 }
 
 try:
-    req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers)
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
     with urllib.request.urlopen(req) as response:
-        result = json.loads(response.read().decode("utf-8"))
-        content = result['choices'][0]['message']['content'].strip()
-        print(f"   🎉 Inference Test Clear!")
-        print(f"   🤖 Model Response: \"{content}\"")
+        res = json.loads(response.read().decode("utf-8"))
+        vector = res['data'][0]['embedding']
+        dim = len(vector)
+        print(f"   🎉 Vector Generation Clear!")
+        print(f"   📐 Tensor Dimensions : {dim}")
+        print(f"   🔢 Sample Coordinates: [{vector[0]:.4f}, {vector[1]:.4f}, {vector[2]:.4f}, ...]")
         sys.exit(0)
 except Exception as e:
-    print(f"   ❌ Python Inference Test Failed -> {e}")
+    print(f"   ❌ Python Reranking Test Failed -> {e}")
     sys.exit(1)
 EOF
 
-    python3 /tmp/llama_test.py
+    python3 /tmp/embed_test.py "$PORT"
     local test_result=$?
-    rm /tmp/llama_test.py
+    rm /tmp/embed_test.py
 
     if [ $test_result -eq 0 ]; then
-        echo "🟢 ALL TESTS PASSED! Server is healthy."
+        echo "🟢 ALL TESTS PASSED! Reranking Engine is healthy."
     else
         echo "❌ DIAGNOSTICS FAILED!"
         exit 1
@@ -167,12 +164,12 @@ EOF
 case "$1" in
     start) start_server ;;
     stop) stop_server ;;
-    restart) stop_server; sleep 2; start_server ;;
+    restart) stop_server; sleep 1; start_server ;;
     status)
         if is_running; then
-            echo "🟢 llama.cpp Server Status: RUNNING"
+            echo "🟢 llama.cpp Embed Server Status: RUNNING (Port $PORT)"
         else
-            echo "🔴 llama.cpp Server Status: DOWN / STOPPED"
+            echo "🔴 llama.cpp Embed Server Status: DOWN"
         fi
         ;;
     logs)

@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 
 # Configurable defaults - pre-tuned for Gemma-4-26B with MoE RAM offloading
+#DEFAULT_MODEL="/workplace/models/Qwythos-9B-Claude-Mythos-5-1M-GGUF/Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M.gguf"
+#DEFAULT_MMPROJ_MODEL="/workplace/models/Qwythos-9B-Claude-Mythos-5-1M-GGUF/mmproj-Qwythos-9B-Claude-Mythos-5-1M-F16.gguf"
+DEFAULT_MODEL="/workplace/models/Qwable-9B-Claude-Fable-5/Qwable-9B-Claude-Fable-5-Q4_K_M.gguf"
+DEFAULT_MMPROJ_MODEL="/workplace/models/Qwable-9B-Claude-Fable-5/mmproj-Qwable-9B-Claude-Fable-5-f16.gguf"
+#DEFAULT_MODEL="/workplace/models/Qwythos-9B-v2/Qwythos-9B-v2-MTP-Q4_K_M.gguf"
+#DEFAULT_MMPROJ_MODEL="/workplace/models/Qwythos-9B-v2/mmproj-Qwythos-9B-v2-BF16.gguf"
+DEFAULT_MODEL="/workplace/models/Qwythos-9B-Claude-Mythos-5-1M-GGUF/Qwythos-9B-Claude-Mythos-5-1M-MTP-Q6_K.gguf"
+DEFAULT_MMPROJ_MODEL="/workplace/models/Qwythos-9B-Claude-Mythos-5-1M-GGUF/mmproj-Qwythos-9B-Claude-Mythos-5-1M-F16.gguf"
 
-#DEFAULT_MODEL="/workplace/models/Meta-Llama-3-8B-Instruct-Q4/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"
-#DEFAULT_MODEL="workplace/models/Meta-Llama-3.2-Q4/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
-DEFAULT_MODEL="/workplace/models/Meta-Llama-3.2-Q4/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
-DEFAULT_CTX=8192
+DEFAULT_CTX=65536
+#DEFAULT_CTX=32768
 DEFAULT_NGL=999
-#DEFAULT_NGL=0
-PORT=8083
+PORT=8081
 
 PID_FILE="/tmp/llamacpp_server.pid"
 LOG_FILE="/tmp/llamacpp_server.log"
@@ -77,6 +82,8 @@ start_server() {
     fi
 
     local model="${MODEL:-$DEFAULT_MODEL}"
+    local mmproj_model="${MODEL:-$DEFAULT_MMPROJ_MODEL}"
+    local draft_model="${MODEL:-$DEFAULT_DRAFT_MODEL}"
     local ctx="${CTX_SIZE:-$DEFAULT_CTX}"
     local ngl="${N_GPU_LAYERS:-$DEFAULT_NGL}"
 
@@ -91,19 +98,38 @@ start_server() {
     #   --no-mmap: load model into memory instead of virtual mapping
     #   --chat-template-kwargs '{"enable_thinking":true}': enable thinking
     #   --chat-template-kwargs '{"enable_thinking":false}': disable thinking
+    #   --jinja: avoid template issue for new qwen model
+
+        #--spec-type draft-mtp \
+        #--spec-draft-n-max 4 \
     ./llama-server \
         --model "$model" \
+        --mmproj "$mmproj_model" \
         --n-gpu-layers "$ngl" \
         --ctx-size "$ctx" \
+        --parallel 1 \
+        -b 2048 \
+        -ub 512 \
         --no-mmap \
+        -t 6 \
         --mlock \
         --flash-attn on \
         --cache-type-k q8_0 \
         --cache-type-v q8_0 \
-        -n 8192 \
+        --cache-type-k-draft q8_0 \
+        --cache-type-v-draft q8_0 \
+        --temp 0.6 \
+        --top-k 20 \
+        --top-p 0.95 \
+        --repeat_penalty 1.05 \
+        -n 16384 \
+        --reasoning-budget 8192 \
         --host 0.0.0.0 \
         --port "$PORT" \
+        --jinja \
+        --metrics \
         > "$LOG_FILE" 2>&1 &
+        #--chat-template-kwargs '{"enable_thinking": true}' \
 
     # The magic bullet: Grab the exact PID of the last background command
     local strict_pid=$!

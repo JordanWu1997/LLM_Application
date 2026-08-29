@@ -1,0 +1,117 @@
+name: LLM
+
+services:
+
+  ollama:
+    image: ollama/ollama:latest
+    #container_name: ollama
+    runtime: nvidia
+    ports:
+      - 11434:11434
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - .:/code
+      - ./ollama/ollama:/root/.ollama
+    #pull_policy: always
+    tty: true
+    restart: unless-stopped
+    networks:
+      - llm_network
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_CONTEXT_LENGTH=8192
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_KV_CACHE_TYPE=q8_0
+      - OLLAMA_FLASH_ATTENTION=1
+      #- OLLAMA_CONTEXT_LENGTH=131072
+      #- OLLAMA_KEEP_ALIVE=10m
+
+  ollama_cpu:
+    image: ollama/ollama:latest
+    #container_name: ollama_cpu
+    ports:
+      - 11435:11435
+    volumes:
+      - .:/code
+      - ./ollama/ollama:/root/.ollama
+    #pull_policy: always
+    tty: true
+    restart: unless-stopped
+    networks:
+      - llm_network
+    environment:
+      - OLLAMA_KEEP_ALIVE=10m
+      - OLLAMA_CONTEXT_LENGTH=32000
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    #container_name: open-webui
+    volumes:
+      - ./open-webui:/app/backend/data
+    depends_on:
+      - ollama
+    ports:
+      - 8080:8080
+    environment:
+      - OLLAMA_BASE_URL=http://pytorch:8000
+      #- OLLAMA_BASE_URL=http://ollama:11434
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: unless-stopped
+    networks:
+      - llm_network
+
+  anythingllm:
+    image: mintplexlabs/anythingllm:latest
+    #container_name: anythingllm
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    ports:
+      - 3001:3001
+    volumes:
+      - ./anythingllm/data:/app/server/storage
+      - ./anythingllm/.env:/app/server/.env
+    depends_on:
+      - ollama
+    networks:
+      - llm_network
+    environment:
+      - STORAGE_DIR=/app/server/storage
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+  pytorch:
+    image: jordan/pytorch:2.7.1-cuda11.8-cudnn9-runtime
+    build:
+      context: .
+      dockerfile: pytorch/Dockerfile
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      JUPYTER_PORT: "8889"
+    tty: true
+    volumes:
+      - ./pytorch:/workspace
+    ports:
+      - 8889:8889
+      - 6008:6008
+    restart: unless-stopped
+    networks:
+      - llm_network
+
+networks:
+  llm_network:
+    driver: bridge

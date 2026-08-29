@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 
 # Configurable defaults - pre-tuned for Gemma-4-26B with MoE RAM offloading
-DEFAULT_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/gemma-4-26B-A4B-it-UD-IQ2_M.gguf"
-DEFAULT_MMPROJ_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/mmproj-BF16.gguf"
-DEFAULT_DRAFT_MODEL="/workplace/models/Gemma4-26B-A4B-it-UD/mtp-gemma-4-26B-A4B-it.gguf"
-#DEFAULT_CTX=131072
-DEFAULT_CTX=32768
-#DEFAULT_CTX=8192
+#DEFAULT_MODEL="/workplace/models/Cosmos-Reason2-2B-GGUF/Cosmos-Reason2-2B-F16.gguf"
+#DEFAULT_MMPROJ_MODEL="/workplace/models/Cosmos-Reason2-2B-GGUF/mmproj-Cosmos-Reason2-2B-F16.gguf"
+
+#DEFAULT_MODEL="/workplace/models/Cosmos-Reason1-7B-GGUF/Cosmos-Reason1-7B-UD-Q6_K_XL.gguf"
+#DEFAULT_MMPROJ_MODEL="/workplace/models/Cosmos-Reason1-7B-GGUF/mmproj-BF16.gguf"
+
+DEFAULT_MODEL="/workplace/models/Cosmos-Reason2-8B-GGUF/Cosmos-Reason2-8B-Q8_0.gguf"
+DEFAULT_MMPROJ_MODEL="/workplace/models/Cosmos-Reason2-8B-GGUF/mmproj-Cosmos-Reason2-8B-F16.gguf"
+
+DEFAULT_CTX=8192
 DEFAULT_NGL=999
-PORT=8080
+PORT=8083
 
 PID_FILE="/tmp/llamacpp_server.pid"
 LOG_FILE="/tmp/llamacpp_server.log"
@@ -78,7 +82,6 @@ start_server() {
 
     local model="${MODEL:-$DEFAULT_MODEL}"
     local mmproj_model="${MODEL:-$DEFAULT_MMPROJ_MODEL}"
-    local draft_model="${MODEL:-$DEFAULT_DRAFT_MODEL}"
     local ctx="${CTX_SIZE:-$DEFAULT_CTX}"
     local ngl="${N_GPU_LAYERS:-$DEFAULT_NGL}"
 
@@ -97,19 +100,13 @@ start_server() {
         --model "$model" \
         --mmproj "$mmproj_model" \
         --n-gpu-layers "$ngl" \
-        --n-cpu-moe 16 \
         --ctx-size "$ctx" \
-        --model-draft "$draft_model" \
-        --spec-type "draft-mtp" \
         --no-mmap \
         --mlock \
         --flash-attn on \
-        --cache-type-k q8_0 \
-        --cache-type-v q8_0 \
         -n 8192 \
         --host 0.0.0.0 \
         --port "$PORT" \
-        --chat-template-kwargs '{"enable_thinking": false}' \
         > "$LOG_FILE" 2>&1 &
 
     # The magic bullet: Grab the exact PID of the last background command

@@ -1,28 +1,26 @@
 version: '3.8'
 
 services:
-  llamacpp-server:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
-    container_name: llamacpp-server
 
+  llamacpp-server-8081:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llamacpp-server-8081
+    restart: always
     # The exact equivalent of `-it` (Interactive + TTY)
     stdin_open: true # -i
     tty: true        # -t
-
     # Mandatory: Share host memory space to prevent PyTorch/vLLM crashes
     ipc: host
     ports:
-      - "8081:8080"
+      - "8081:8081"
     volumes:
       - .:/workplace
     working_dir: /workplace
-
     # Mandatory ulimit setting for memory locking
     ulimits:
       memlock:
         soft: -1
         hard: -1
-
     # GPU
     deploy:
       resources:
@@ -31,20 +29,127 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-
     # Clear out the vLLM Python entrypoint
     entrypoint: [""]
     # Set the idling command to keep container up
     command: tail -f /dev/null
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
-    # Default command to start llamacpp server
-      #command: >
-      #  -m /app/models/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
-      #  -ngl 99
-      #  -ot "exps=CPU"
-      #  -c 32768
-      #  -fa on
-      #  --cache-type-k q8_0
-      #  --cache-type-v q8_0
-      #  --host 0.0.0.0
-      #  --port 8080
+  llamacpp-server-8082:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llamacpp-server-8082
+    restart: always
+    # The exact equivalent of `-it` (Interactive + TTY)
+    stdin_open: true # -i
+    tty: true        # -t
+    # Mandatory: Share host memory space to prevent PyTorch/vLLM crashes
+    ipc: host
+    ports:
+      - "8082:8082"
+    volumes:
+      - .:/workplace
+    working_dir: /workplace
+    # Mandatory ulimit setting for memory locking
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    # GPU
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Clear out the vLLM Python entrypoint
+    entrypoint: [""]
+    # Set the idling command to keep container up
+    command: tail -f /dev/null
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  llamacpp-server-8083:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llamacpp-server-8083
+    restart: always
+    # The exact equivalent of `-it` (Interactive + TTY)
+    stdin_open: true # -i
+    tty: true        # -t
+    # Mandatory: Share host memory space to prevent PyTorch/vLLM crashes
+    ipc: host
+    ports:
+      - "8083:8083"
+    volumes:
+      - .:/workplace
+    working_dir: /workplace
+    # Mandatory ulimit setting for memory locking
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    # GPU
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Clear out the vLLM Python entrypoint
+    entrypoint: [""]
+    # Set the idling command to keep container up
+    command: tail -f /dev/null
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  llamacpp-server-8084:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llamacpp-server-8084
+    restart: always
+    # The exact equivalent of `-it` (Interactive + TTY)
+    stdin_open: true # -i
+    tty: true        # -t
+    # Mandatory: Share host memory space to prevent PyTorch/vLLM crashes
+    ipc: host
+    ports:
+      - "8084:8084"
+    volumes:
+      - .:/workplace
+    working_dir: /workplace
+    # Mandatory ulimit setting for memory locking
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    # GPU
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Clear out the vLLM Python entrypoint
+    entrypoint: [""]
+    # Set the idling command to keep container up
+    command: tail -f /dev/null
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

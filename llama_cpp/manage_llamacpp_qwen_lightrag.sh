@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
-# Configurable defaults - pre-tuned for Gemma-4-26B with MoE RAM offloading
-DEFAULT_MODEL="/workplace/models/Gemma4-12B-Q4/gemma-4-12b-it-qat-q4_0.gguf"
-DEFAULT_MMPROJ_MODEL="/workplace/models/Gemma4-12B-Q4/mmproj-gemma-4-12b-it-qat-q4_0.gguf"
-DEFAULT_DRAFT_MODEL="/workplace/models/Gemma4-12B-Q4/gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf"
+DEFAULT_MODEL="/workplace/models/Qwen3.5-9B-MTP-GGUF/Qwen3.5-9B-UD-Q5_K_XL.gguf"
+DEFAULT_MMPROJ_MODEL="/workplace/models/Qwen3.5-9B-MTP-GGUF/mmproj-BF16.gguf"
+
+#DEFAULT_CTX=131072
+#DEFAULT_CTX=65536
 #DEFAULT_CTX=32768
-DEFAULT_CTX=131072
+DEFAULT_CTX=16384
 DEFAULT_NGL=999
-PORT=8080
+PORT=8081
 
 PID_FILE="/tmp/llamacpp_server.pid"
 LOG_FILE="/tmp/llamacpp_server.log"
@@ -92,23 +93,36 @@ start_server() {
     #   --no-mmap: load model into memory instead of virtual mapping
     #   --chat-template-kwargs '{"enable_thinking":true}': enable thinking
     #   --chat-template-kwargs '{"enable_thinking":false}': disable thinking
+    #   --jinja: avoid template issue for new qwen model
+
     ./llama-server \
         --model "$model" \
-        --mmproj "$mmproj_model" \
-        --n-gpu-layers "$ngl" \
         --ctx-size "$ctx" \
-        --model-draft "$draft_model" \
         --spec-type draft-mtp \
         --spec-draft-n-max 4 \
-        --no-mmap \
-        --mlock \
+        --parallel 1 \
+        -b 2048 \
+        -ub 512 \
+        --n-gpu-layers "$ngl" \
         --flash-attn on \
+        -t 6 \
         --cache-type-k q8_0 \
         --cache-type-v q8_0 \
+        --cache-type-k-draft q8_0 \
+        --cache-type-v-draft q8_0 \
+        --cache-ram 2048 \
+        --temp 0.95 \
+        --top-p 0.95 \
+        --top-k 20 \
+        --min-p 0.0 \
+        --presence-penalty 1.5 \
+        --repeat-penalty 1.0 \
         -n 8192 \
+        --reasoning-budget 4096 \
         --host 0.0.0.0 \
         --port "$PORT" \
-        --chat-template-kwargs '{"enable_thinking": false}' \
+        --jinja \
+        --chat-template-kwargs '{"enable_thinking": true}' \
         > "$LOG_FILE" 2>&1 &
 
     # The magic bullet: Grab the exact PID of the last background command

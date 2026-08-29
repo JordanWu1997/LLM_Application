@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 
 # Configurable defaults - pre-tuned for Gemma-4-26B with MoE RAM offloading
-
-#DEFAULT_MODEL="/workplace/models/Meta-Llama-3-8B-Instruct-Q4/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"
-#DEFAULT_MODEL="workplace/models/Meta-Llama-3.2-Q4/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
-DEFAULT_MODEL="/workplace/models/Meta-Llama-3.2-Q4/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
-DEFAULT_CTX=8192
+DEFAULT_MODEL="/workplace/models/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf"
+DEFAULT_CTX=32768
 DEFAULT_NGL=999
-#DEFAULT_NGL=0
 PORT=8083
 
 PID_FILE="/tmp/llamacpp_server.pid"
@@ -94,6 +90,7 @@ start_server() {
     ./llama-server \
         --model "$model" \
         --n-gpu-layers "$ngl" \
+        --n-cpu-moe 20 \
         --ctx-size "$ctx" \
         --no-mmap \
         --mlock \
@@ -103,6 +100,7 @@ start_server() {
         -n 8192 \
         --host 0.0.0.0 \
         --port "$PORT" \
+        --chat-template-kwargs '{"enable_thinking": false}' \
         > "$LOG_FILE" 2>&1 &
 
     # The magic bullet: Grab the exact PID of the last background command

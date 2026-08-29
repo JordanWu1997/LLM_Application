@@ -26,7 +26,7 @@
 - [X] Translate bot w/ `translategemma`
   - [X] Auto detect input language w/ langdetect
 - [X] Code reviewer
-  - Here I just integrate ollama models into my dev workflow with [vim-ai](https://github.com/madox2/vim-ai)
+  - Here I just integrate ollama/llamacpp models into my dev workflow with [vim-ai](https://github.com/madox2/vim-ai)
     - My [Vim-Tmux workflow](https://github.com/JordanWu1997/Vim_Tmux_Config)
 - [X] Python code function docstring and type hinting generator
 - [X] Shell assistant
@@ -34,6 +34,7 @@
 - [ ] SQL assistant
 - [ ] Note/Diary organizer
   - [ ] LLM Wiki
+      - Here I just use hermes-agent built-in LLM Wiki skill
 
 ### Vision
 
@@ -45,7 +46,7 @@
   - Check my repo: [CV_Application](https://github.com/JordanWu1997/CV_Application)
 - [ ] Media tagger
 
-## RAG List
+## RAG
 
 - [ ] Knowledge Graph for [My Personal knowledge](https://github.com/JordanWu1997/Knowledge_Base)
 
@@ -59,9 +60,9 @@
   - [X] Personal Assistant
   - [X] Connect to Discord
   - [X] Connect to Google Workplace
-- [ ] OpenClaw
-  - [ ] Task Worker
-- [ ] Agentic Coding
+- [X] OpenClaw
+  - [X] Task Worker
+- [ ] Multi-Agent System for Coding
   - [ ] Planer
   - [ ] Code builder
   - [ ] Code tester/reviewer
