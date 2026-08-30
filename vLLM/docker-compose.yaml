@@ -41,6 +41,9 @@ services:
       # Disables the FlashInfer sampling backend to prevent the deadlock
       - VLLM_USE_FLASHINFER=0
 
+    # Runtime working directory
+    working_dir: /app
+
     # GPU Configuration (Equivalent to --gpus all)
     deploy:
       resources:

@@ -3,7 +3,8 @@
 # Configurable defaults - edit these or pass them dynamically
 DEFAULT_MODEL="cyankiwi/Qwen3.5-4B-AWQ-4bit"
 DEFAULT_QUANTIZATION="compressed-tensors"  # Updated to match model config
-DEFAULT_MAX_MODEL_LEN=2048
+#DEFAULT_MAX_MODEL_LEN=2048
+DEFAULT_MAX_MODEL_LEN=24576
 DEFAULT_GPU_UTIL=0.75
 DEFAULT_MAX_SEQS=2
 PORT=8000
@@ -98,6 +99,7 @@ start_server() {
         --gpu-memory-utilization "$gpu_util" \
         --max-num-seqs "$max_seqs" \
         --enforce-eager \
+        --allowed-local-media-path / \
         --default-chat-template-kwargs '{"enable_thinking": false}' \
         2>&1 | tee "$LOG_FILE" > /proc/1/fd/1 &
 
@@ -191,9 +193,25 @@ EOF
 }
 
 case "$1" in
-    start) start_server ;;
-    stop) stop_server ;;
-    restart) stop_server; sleep 2; start_server ;;
+    start)
+        start_server
+        if [ -f "$LOG_FILE" ]; then
+            tail -f "$LOG_FILE"
+        else
+            echo "❌ No log file found at $LOG_FILE yet."
+        fi
+        ;;
+    stop)
+        stop_server
+        ;;
+    restart)
+        stop_server; sleep 2; start_server
+        if [ -f "$LOG_FILE" ]; then
+            tail -f "$LOG_FILE"
+        else
+            echo "❌ No log file found at $LOG_FILE yet."
+        fi
+        ;;
     status)
         if is_running; then
             echo "🟢 vLLM Server Status: RUNNING"
