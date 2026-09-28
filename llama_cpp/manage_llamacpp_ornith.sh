@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 
-#DEFAULT_MODEL="/workplace/models/Qwen3.8-27B/Qwen3.8-27B-UD-IQ2_S.gguf"
-DEFAULT_MODEL="/workplace/models/Qwen3.8-27B/Qwen3.8-27B-UD-Q4_K_XL.gguf"
-DEFAULT_MMPROJ_MODEL="/workplace/models/Qwen3.8-27B/mmproj-BF16.gguf"
-DEFAULT_DRAFT_MODEL="/workplace/models/Qwen3.8-27B/mtp-Qwen3.8-27B-Q4_0.gguf"
-DEFAULT_CTX=16384
-#DEFAULT_CTX=65536
-DEFAULT_NGL=999
+#DEFAULT_MODEL="/workplace/models/Ornith-1.5-9B-GGUF/Ornith-1.5-9B-Q6_K.gguf"
+##DEFAULT_MODEL="/workplace/models/Ornith-1.5-9B-GGUF/Ornith-1.5-9B-Q4_K_M.gguf"
+DEFAULT_MODEL="/workplace/models/Ornith-1.5-9B-GGUF/Ornith-1.5-9B-MTP-IQ4_XS.gguf"
+DEFAULT_MMPROJ_MODEL="/workplace/models/Ornith-1.5-9B-GGUF/mmproj-Ornith-1.5-9B-BF16.gguf"
+
+DEFAULT_CTX=131072
+#DEFAULT_CTX=153600
+#DEFAULT_CTX=163840
+DEFAULT_NGL=99
 PORT=8081
 
 PID_FILE="/tmp/llamacpp_server.pid"
@@ -93,45 +95,44 @@ start_server() {
     #   --chat-template-kwargs '{"enable_thinking":true}': enable thinking
     #   --chat-template-kwargs '{"enable_thinking":false}': disable thinking
     #   --jinja: avoid template issue for new qwen model
+    #   --no-mmproj-offload: load mmproj model to vRAM instead of CPU RAM
 
-        ##--mmproj "$mmproj_model" \
-        #--no-mmproj-offload \
+        #--model-draft "$draft_model" \
     ./llama-server \
+        --load-mode auto \
         --alias local-llamacpp \
         --model "$model" \
-        --n-gpu-layers 32 \
+        --n-gpu-layers $ngl \
+        --mmproj "$mmproj_model" \
+        --image-min-tokens 1024 \
         --ctx-size "$ctx" \
-        --model-draft "$draft_model" \
         --spec-type draft-mtp \
-        --spec-draft-n-max 4 \
-        --spec-draft-n-min 0 \
-        --spec-draft-p-min 0.35 \
+        --spec-draft-n-max 3 \
         --parallel 1 \
         -b 2048 \
         -ub 512 \
         -t 6 \
         -tb 12 \
         --flash-attn on \
-        --no-mmap \
-        --cache-type-k q4_0 \
-        --cache-type-v q4_0 \
-        --cache-type-k-draft q4_0 \
-        --cache-type-v-draft q4_0 \
+        --cache-type-k q8_0 \
+        --cache-type-v q8_0 \
+        --cache-type-k-draft q8_0 \
+        --cache-type-v-draft q8_0 \
         --cache-ram 2048 \
-        --temp 1.0 \
+        --ctx-checkpoints 8 \
+        --temp 0.6 \
         --top-p 0.95 \
         --top-k 20 \
         --min-p 0.0 \
         --presence-penalty 0.0 \
         --repeat-penalty 1.0 \
-        -n 8192 \
+        --predict 16384 \
         --reasoning-budget 4096 \
         --host 0.0.0.0 \
         --port "$PORT" \
         --jinja \
-        --chat-template-kwargs '{"enable_thinking": false}' \
+        --reasoning on \
         > "$LOG_FILE" 2>&1 &
-        #--chat-template-kwargs '{"enable_thinking": true}' \
 
     # The magic bullet: Grab the exact PID of the last background command
     local strict_pid=$!
@@ -157,15 +158,15 @@ test_server() {
 
     echo "🧠 [Step 2/2] Submitting reasoning test payload..."
 
-    cat << 'EOF' > /tmp/llama_test.py
+    cat << EOF > /tmp/llama_test.py
 import urllib.request
 import json
 import sys
 
-url = "http://localhost:8080/v1/chat/completions"
+url = "http://localhost:${PORT}/v1/chat/completions"
 headers = {"Content-Type": "application/json"}
 data = {
-    "model": "Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf",
+    "model": "local-llamacpp",
     "messages": [{"role": "user", "content": "What is 2+2? Reply with just the number."}],
     "max_tokens": 10
 }
@@ -185,7 +186,7 @@ EOF
 
     python3 /tmp/llama_test.py
     local test_result=$?
-    rm /tmp/llama_test.py
+    rm -f /tmp/llama_test.py
 
     if [ $test_result -eq 0 ]; then
         echo "🟢 ALL TESTS PASSED! Server is healthy."

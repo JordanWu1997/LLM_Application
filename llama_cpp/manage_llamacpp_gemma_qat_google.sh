@@ -135,15 +135,15 @@ test_server() {
 
     echo "🧠 [Step 2/2] Submitting reasoning test payload..."
 
-    cat << 'EOF' > /tmp/llama_test.py
+    cat << EOF > /tmp/llama_test.py
 import urllib.request
 import json
 import sys
 
-url = "http://localhost:8080/v1/chat/completions"
+url = "http://localhost:${PORT}/v1/chat/completions"
 headers = {"Content-Type": "application/json"}
 data = {
-    "model": "Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf",
+    "model": "local-llamacpp",
     "messages": [{"role": "user", "content": "What is 2+2? Reply with just the number."}],
     "max_tokens": 10
 }
@@ -163,7 +163,7 @@ EOF
 
     python3 /tmp/llama_test.py
     local test_result=$?
-    rm /tmp/llama_test.py
+    rm -f /tmp/llama_test.py
 
     if [ $test_result -eq 0 ]; then
         echo "🟢 ALL TESTS PASSED! Server is healthy."
